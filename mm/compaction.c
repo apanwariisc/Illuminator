@@ -72,9 +72,52 @@ static inline bool migrate_to_async_suitable(int migratetype)
 		migratetype == MIGRATE_MIXED;
 }
 
-static inline bool migrate_from_async_suitable(int migratetype)
+static inline bool is_mixed_movable(struct page *page)
 {
-	return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE;
+	unsigned long pfn, block_start_pfn, block_end_pfn;
+	struct page_ext *page_ext;
+	int page_mt;
+
+	block_start_pfn = page_to_pfn(page);
+	block_start_pfn = block_start_pfn & ~(pageblock_nr_pages-1);
+	block_end_pfn = block_start_pfn + pageblock_nr_pages - 1;
+	pfn = block_start_pfn;
+
+	for (; pfn < block_end_pfn; pfn++) {
+		if (!pfn_valid_within(pfn))
+			continue;
+
+		page = pfn_to_page(pfn);
+                if (PageBuddy(page)) {
+                        pfn += (1UL << page_order(page)) - 1;
+                        continue;
+                }
+
+                if (PageReserved(page))
+                        continue;
+
+		page_ext = lookup_page_ext(page);
+
+		if (!test_bit(PAGE_EXT_OWNER, &page_ext->flags))
+			continue;
+
+		page_mt = gfpflags_to_migratetype(page_ext->gfp_mask);
+		if (page_mt != MIGRATE_MOVABLE)
+			return false;
+		pfn += (1UL << page_ext->order) - 1;
+	}
+	return true;
+}
+
+static inline bool migrate_from_async_suitable(struct page *page, int migratetype)
+{
+	struct page_block *page_block;
+
+	if (is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE)
+		return true;
+	if (migratetype == MIGRATE_MIXED)
+		return is_mixed_movable(page);
+	return false;
 }
 
 /*
@@ -1155,7 +1198,7 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 		 * of work satisfies the allocation.
 		 */
 		if (cc->mode == MIGRATE_ASYNC &&
-		    !migrate_from_async_suitable(get_pageblock_migratetype(page)))
+		    !migrate_from_async_suitable(page, get_pageblock_migratetype(page)))
 			continue;
 
 		/* Perform the isolation */
