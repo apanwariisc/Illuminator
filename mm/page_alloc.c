@@ -581,6 +581,18 @@ static inline void rmv_page_order(struct page *page)
 	set_page_private(page, 0);
 }
 
+static void change_pageblock_range(struct page *pageblock_page,
+					int start_order, int migratetype)
+{
+	int nr_pageblocks = 1 << (start_order - pageblock_order);
+
+	while (nr_pageblocks--) {
+		set_pageblock_migratetype(pageblock_page, migratetype);
+		pageblock_page += pageblock_nr_pages;
+	}
+}
+
+
 /*
  * This function checks whether a page is free && is the buddy
  * we can do coalesce a page and its buddy if
@@ -730,7 +742,12 @@ static inline void __free_one_page(struct page *page,
 		}
 	}
 
-	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
+	if (unlikely(order >= pageblock_order && migratetype == MIGRATE_MIXED)) {
+		list_add(&page->lru, &zone->free_area[order].free_list[MIGRATE_MOVABLE]);
+		change_pageblock_range(page, order, MIGRATE_MOVABLE);
+	}
+	else
+		list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
 out:
 	zone->free_area[order].nr_free++;
 }
@@ -1553,17 +1570,6 @@ int move_freepages_block(struct zone *zone, struct page *page,
 		return 0;
 
 	return move_freepages(zone, start_page, end_page, migratetype);
-}
-
-static void change_pageblock_range(struct page *pageblock_page,
-					int start_order, int migratetype)
-{
-	int nr_pageblocks = 1 << (start_order - pageblock_order);
-
-	while (nr_pageblocks--) {
-		set_pageblock_migratetype(pageblock_page, migratetype);
-		pageblock_page += pageblock_nr_pages;
-	}
 }
 
 /*
