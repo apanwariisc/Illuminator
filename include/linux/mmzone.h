@@ -38,7 +38,6 @@
 enum {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_MOVABLE,
-	MIGRATE_MIXED,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
 	MIGRATE_HIGHATOMIC = MIGRATE_PCPTYPES,
@@ -61,6 +60,7 @@ enum {
 #ifdef CONFIG_MEMORY_ISOLATION
 	MIGRATE_ISOLATE,	/* can't allocate from here */
 #endif
+	MIGRATE_MIXED,
 	MIGRATE_TYPES
 };
 
