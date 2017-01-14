@@ -1926,7 +1926,7 @@ __rmqueue_user_fallback(struct zone *zone, unsigned int order, int start_migrate
 		page = list_first_entry(&area->free_list[fallback_mt],
 						struct page, lru);
 		if (can_steal)
-			steal_suitable_fallback(zone, page, start_migratetype);
+			steal_suitable_fallback(zone, page, MIGRATE_MIXED);
 
 		/* Remove the page from the freelists */
 		area->nr_free--;
