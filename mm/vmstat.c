@@ -27,6 +27,7 @@
 #include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/page_owner.h>
+#include <linux/page_block.h>
 
 #include "internal.h"
 
@@ -1381,6 +1382,173 @@ static const struct file_operations proc_vmstat_file_operations = {
 	.llseek		= seq_lseek,
 	.release	= seq_release,
 };
+
+static void fraginfo_showlargepool(struct seq_file *m, pg_data_t *pgdat)
+{
+	int order;
+	unsigned long total_free = 0, large_free = 0;
+	struct zone *zone;
+
+	for_each_populated_zone(zone) {
+		for (order = 0; order < MAX_ORDER; order++) {
+			total_free += ((1UL << order) * zone->free_area[order].nr_free);
+			if (order >= pageblock_order)
+				large_free += ((1UL << order) * zone->free_area[order].nr_free);
+		}
+	}
+	seq_printf(m, "TotalFree: %ld LargePagePool: %ld Ratio: %ld\n",
+		total_free/256, large_free/256, (large_free*100)/total_free);
+}
+
+static inline int count_potential_large_pages(struct zone *zone)
+{
+	struct page *page;
+	struct page_ext *page_ext;
+	unsigned long pfn = zone->zone_start_pfn, block_end_pfn;
+	unsigned long end_pfn = pfn + zone->spanned_pages;
+	int count = 0;
+	int pageblock_mt, page_mt;
+
+	/* Scan block by block. First and last block may be incomplete */
+	pfn = zone->zone_start_pfn;
+
+	/*
+	 * Walk the zone in pageblock_nr_pages steps. If a page block spans
+	 * a zone boundary, it will be double counted between zones. This does
+	 * not matter as the mixed block count will still be correct
+	 */
+	for (; pfn < end_pfn; ) {
+		bool mixed = false;
+		if (!pfn_valid(pfn)) {
+			pfn = ALIGN(pfn + 1, MAX_ORDER_NR_PAGES);
+			continue;
+		}
+
+		block_end_pfn = ALIGN(pfn + 1, pageblock_nr_pages);
+		block_end_pfn = min(block_end_pfn, end_pfn);
+
+		page = pfn_to_page(pfn);
+		pageblock_mt = get_pfnblock_migratetype(page, pfn);
+		if (pageblock_mt != MIGRATE_MOVABLE) {
+			pfn = block_end_pfn;
+			continue;
+		}
+
+		for (; pfn < block_end_pfn; pfn++) {
+			if (!pfn_valid_within(pfn))
+				continue;
+
+			page = pfn_to_page(pfn);
+			if (PageBuddy(page)) {
+				pfn += (1UL << page_order(page)) - 1;
+				if (pfn >= block_end_pfn) {
+					pfn = block_end_pfn;
+					break;
+				}
+				else
+					continue;
+			}
+
+			if (PageReserved(page))
+				continue;
+
+			page_ext = lookup_page_ext(page);
+
+			if (!test_bit(PAGE_EXT_OWNER, &page_ext->flags))
+				continue;
+
+			page_mt = gfpflags_to_migratetype(page_ext->gfp_mask);
+
+			if (pageblock_mt != page_mt) {
+				mixed = true;
+				pfn = block_end_pfn;
+				break;
+			}
+			pfn += (1UL << page_ext->order) - 1;
+			if (pfn >= block_end_pfn)
+				pfn = block_end_pfn;
+		}
+		if (!mixed)
+			count++;
+	}
+	return count;
+}
+
+static int count_other_lists(struct zone *zone)
+{
+	int mtype, count_large = 0;
+	unsigned long pfn;
+	unsigned long start_pfn = zone->zone_start_pfn;
+	unsigned long end_pfn = zone_end_pfn(zone);
+
+	for (pfn = start_pfn; pfn < end_pfn; pfn += pageblock_nr_pages) {
+		struct page *page;
+
+		if (!pfn_valid(pfn))
+			continue;
+
+		page = pfn_to_page(pfn);
+
+		/* Watch for unexpected holes punched in the memmap */
+		if (!memmap_valid_within(pfn, page, zone))
+			continue;
+
+		mtype = get_pageblock_migratetype(page);
+
+		if (mtype == MIGRATE_MOVABLE)
+			continue;
+
+		if (pageblock_free_pages(page) >= pageblock_nr_pages)
+			count_large++;
+	}
+
+	return count_large;
+}
+
+static void fraginfo_showmixedstats(struct seq_file *m, pg_data_t *pgdat)
+{
+	int potential_large_pages = 0;
+	struct zone *zone;
+
+	for_each_populated_zone(zone) {
+		potential_large_pages += count_potential_large_pages(zone);
+		potential_large_pages += count_other_lists(zone);
+	}
+	seq_printf(m, "PotentialLargePages: %d\n", potential_large_pages);
+}
+static int fraginfo_show(struct seq_file *m, void *arg)
+{
+	pg_data_t *pgdat = (pg_data_t *)arg;
+
+	/* check memoryless node */
+	if (!node_state(pgdat->node_id, N_MEMORY))
+		return 0;
+
+	fraginfo_showlargepool(m, pgdat);
+	fraginfo_showmixedstats(m, pgdat);
+
+	return 0;
+}
+
+static const struct seq_operations fraginfo_op = {
+	.start	= frag_start,
+	.next	= frag_next,
+	.stop	= frag_stop,
+	.show	= fraginfo_show,
+};
+
+static int fraginfo_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &fraginfo_op);
+}
+
+static const struct file_operations fraginfo_file_ops = {
+	.open		= fraginfo_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 #endif /* CONFIG_PROC_FS */
 
 #ifdef CONFIG_SMP
@@ -1593,6 +1761,7 @@ static int __init setup_vmstat(void)
 	proc_create("pagetypeinfo", S_IRUGO, NULL, &pagetypeinfo_file_ops);
 	proc_create("vmstat", S_IRUGO, NULL, &proc_vmstat_file_operations);
 	proc_create("zoneinfo", S_IRUGO, NULL, &proc_zoneinfo_file_operations);
+	proc_create("fraginfo", S_IRUGO, NULL, &fraginfo_file_ops);
 #endif
 	return 0;
 }
