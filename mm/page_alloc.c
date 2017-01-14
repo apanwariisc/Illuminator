@@ -1443,37 +1443,6 @@ static int prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
 }
 
 /*
- * Go through the free lists for the given migratetype and remove
- * the smallest available page from the freelists
- */
-static inline
-struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
-						int migratetype)
-{
-	unsigned int current_order;
-	struct free_area *area;
-	struct page *page;
-
-	/* Find a page of the appropriate size in the preferred list */
-	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
-		area = &(zone->free_area[current_order]);
-		page = list_first_entry_or_null(&area->free_list[migratetype],
-							struct page, lru);
-		if (!page)
-			continue;
-		list_del(&page->lru);
-		rmv_page_order(page);
-		area->nr_free--;
-		expand(zone, page, order, current_order, area, migratetype);
-		set_pcppage_migratetype(page, migratetype);
-		return page;
-	}
-
-	return NULL;
-}
-
-
-/*
  * This array describes the order lists are fallen back to when
  * the free lists for the desirable migrate type are depleted
  */
@@ -1488,6 +1457,23 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 	[MIGRATE_ISOLATE]     = { MIGRATE_TYPES }, /* Never used */
 #endif
 };
+
+/*
+ * This array describes the order lists are fallen back to when
+ * the free lists for the desirable migrate type are depleted
+ */
+static int fallbacks_full[MIGRATE_TYPES][4] = {
+	[MIGRATE_UNMOVABLE]   = { MIGRATE_RECLAIMABLE, MIGRATE_MIXED, MIGRATE_MOVABLE,   MIGRATE_TYPES },
+	[MIGRATE_RECLAIMABLE] = { MIGRATE_UNMOVABLE, MIGRATE_MIXED, MIGRATE_MOVABLE,   MIGRATE_TYPES },
+	[MIGRATE_MOVABLE]     = { MIGRATE_MIXED, MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_TYPES },
+#ifdef CONFIG_CMA
+	[MIGRATE_CMA]         = { MIGRATE_TYPES }, /* Never used */
+#endif
+#ifdef CONFIG_MEMORY_ISOLATION
+	[MIGRATE_ISOLATE]     = { MIGRATE_TYPES }, /* Never used */
+#endif
+};
+
 
 #ifdef CONFIG_CMA
 static struct page *__rmqueue_cma_fallback(struct zone *zone,
@@ -1653,6 +1639,37 @@ int find_suitable_fallback(struct free_area *area, unsigned int order,
 	*can_steal = false;
 	for (i = 0;; i++) {
 		fallback_mt = fallbacks[migratetype][i];
+		if (fallback_mt == MIGRATE_TYPES)
+			break;
+
+		if (list_empty(&area->free_list[fallback_mt]))
+			continue;
+
+		if (can_steal_fallback(order, migratetype))
+			*can_steal = true;
+
+		if (!only_stealable)
+			return fallback_mt;
+
+		if (*can_steal)
+			return fallback_mt;
+	}
+
+	return -1;
+}
+
+int find_suitable_fallback_full(struct free_area *area, unsigned int order,
+			int migratetype, bool only_stealable, bool *can_steal)
+{
+	int i;
+	int fallback_mt;
+
+	if (area->nr_free == 0)
+		return -1;
+
+	*can_steal = false;
+	for (i = 0;; i++) {
+		fallback_mt = fallbacks_full[migratetype][i];
 		if (fallback_mt == MIGRATE_TYPES)
 			break;
 
@@ -1951,6 +1968,85 @@ __rmqueue_user_fallback(struct zone *zone, unsigned int order, int start_migrate
 	}
 
 	return NULL;
+}
+
+/* Fallback to steal full pblock first */
+static inline struct page *
+__rmqueue_fallback_full(struct zone *zone, unsigned int order, int start_migratetype)
+{
+	struct free_area *area;
+	unsigned int current_order;
+	struct page *page;
+	int fallback_mt;
+	bool can_steal;
+
+	/* Find the largest possible block of pages in the other list */
+	for (current_order = MAX_ORDER-1;
+				current_order >= order && current_order <= MAX_ORDER-1
+				&& current_order >= pageblock_order; --current_order) {
+		area = &(zone->free_area[current_order]);
+		fallback_mt = find_suitable_fallback_full(area, current_order,
+				start_migratetype, false, &can_steal);
+		if (fallback_mt == -1)
+			continue;
+
+		page = list_first_entry(&area->free_list[fallback_mt],
+						struct page, lru);
+		if (can_steal)
+			steal_suitable_fallback(zone, page, start_migratetype);
+
+		/* Remove the page from the freelists */
+		area->nr_free--;
+		list_del(&page->lru);
+		rmv_page_order(page);
+
+		expand(zone, page, order, current_order, area,
+					start_migratetype);
+		/*
+		 * The pcppage_migratetype may differ from pageblock's
+		 * migratetype depending on the decisions in
+		 * find_suitable_fallback(). This is OK as long as it does not
+		 * differ for MIGRATE_CMA pageblocks. Those can be used as
+		 * fallback only via special __rmqueue_cma_fallback() function
+		 */
+		set_pcppage_migratetype(page, start_migratetype);
+
+		trace_mm_page_alloc_extfrag(page, order, current_order,
+			start_migratetype, fallback_mt);
+
+		return page;
+	}
+
+	return NULL;
+}
+
+/*
+ * Go through the free lists for the given migratetype and remove
+ * the smallest available page from the freelists
+ */
+static inline
+struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
+						int migratetype)
+{
+	unsigned int current_order;
+	struct free_area *area;
+	struct page *page;
+
+	/* Find a page of the appropriate size in the preferred list */
+	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
+		area = &(zone->free_area[current_order]);
+		page = list_first_entry_or_null(&area->free_list[migratetype],
+							struct page, lru);
+		if (!page)
+			continue;
+		list_del(&page->lru);
+		rmv_page_order(page);
+		area->nr_free--;
+		expand(zone, page, order, current_order, area, migratetype);
+		set_pcppage_migratetype(page, migratetype);
+		return page;
+	}
+	return __rmqueue_fallback_full(zone, order, migratetype);
 }
 
 static inline struct page * __rmqueue_kernel_fallback(struct zone *zone, unsigned int order, int start_migratetype)
