@@ -36,6 +36,7 @@ struct vm_area_struct;
 #define ___GFP_OTHER_NODE	0x800000u
 #define ___GFP_WRITE		0x1000000u
 #define ___GFP_KSWAPD_RECLAIM	0x2000000u
+#define ___GFP_MIXED		0x4000000u
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -50,6 +51,7 @@ struct vm_area_struct;
 #define __GFP_DMA32	((__force gfp_t)___GFP_DMA32)
 #define __GFP_MOVABLE	((__force gfp_t)___GFP_MOVABLE)  /* Page is movable */
 #define __GFP_MOVABLE	((__force gfp_t)___GFP_MOVABLE)  /* ZONE_MOVABLE allowed */
+#define __GFP_MIXED	((__force gfp_t)___GFP_MIXED)
 #define GFP_ZONEMASK	(__GFP_DMA|__GFP_HIGHMEM|__GFP_DMA32|__GFP_MOVABLE)
 
 /*
@@ -269,6 +271,9 @@ static inline int gfpflags_to_migratetype(const gfp_t gfp_flags)
 
 	if (unlikely(page_group_by_mobility_disabled))
 		return MIGRATE_UNMOVABLE;
+
+	if (gfp_flags & __GFP_MIXED)
+		return MIGRATE_MIXED;
 
 	/* Group based on mobility */
 	return (gfp_flags & GFP_MOVABLE_MASK) >> GFP_MOVABLE_SHIFT;
