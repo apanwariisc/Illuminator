@@ -1496,6 +1496,9 @@ int move_freepages(struct zone *zone,
 	unsigned int order;
 	int pages_moved = 0;
 
+	if (pageblock_free_pages(start_page) < pageblock_nr_pages/2)
+		migratetype = MIGRATE_MIXED;
+
 #ifndef CONFIG_HOLES_IN_ZONE
 	/*
 	 * page_zone is not safe to call in this context when
@@ -1621,6 +1624,9 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 	if (pages >= (1 << (pageblock_order-1)) ||
 			page_group_by_mobility_disabled)
 		set_pageblock_migratetype(page, start_type);
+
+	/* Else update pageblock to MIGRATE_MIXED */
+		set_pageblock_migratetype(page, MIGRATE_MIXED);
 }
 
 /*
@@ -1815,6 +1821,10 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order,
 	struct page *page;
 
 	page = __rmqueue_smallest(zone, order, migratetype);
+
+	if (!page)
+		page = __rmqueue_smallest(zone, order, MIGRATE_MIXED);
+
 	if (unlikely(!page)) {
 		if (migratetype == MIGRATE_MOVABLE)
 			page = __rmqueue_cma_fallback(zone, order);

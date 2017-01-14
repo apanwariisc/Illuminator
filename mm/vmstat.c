@@ -928,6 +928,7 @@ static void walk_zones_in_node(struct seq_file *m, pg_data_t *pgdat,
 static char * const migratetype_names[MIGRATE_TYPES] = {
 	"Unmovable",
 	"Movable",
+	"Mixed",
 	"Reclaimable",
 	"HighAtomic",
 #ifdef CONFIG_CMA
