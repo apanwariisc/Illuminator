@@ -109,9 +109,12 @@ static inline bool is_mixed_movable(struct page *page)
 	return true;
 }
 
-static inline bool migrate_from_async_suitable(struct page *page, int migratetype)
+static inline bool migrate_from_async_suitable(struct page *page, int migratetype, int order)
 {
 	struct page_block *page_block;
+
+	if (order < pageblock_order)
+		return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE;
 
 	if (is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE)
 		return true;
@@ -1198,7 +1201,7 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 		 * of work satisfies the allocation.
 		 */
 		if (cc->mode == MIGRATE_ASYNC &&
-		    !migrate_from_async_suitable(page, get_pageblock_migratetype(page)))
+		    !migrate_from_async_suitable(page, get_pageblock_migratetype(page), cc->order))
 			continue;
 
 		/* Perform the isolation */
