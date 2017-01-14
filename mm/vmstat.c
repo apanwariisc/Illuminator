@@ -1517,6 +1517,90 @@ static void fraginfo_showmixedstats(struct seq_file *m, pg_data_t *pgdat)
 	}
 	seq_printf(m, "PotentialLargePages: %d\n", potential_large_pages);
 }
+
+static bool is_pblock_movable(unsigned long start_pfn, unsigned long block_end_pfn)
+{
+	unsigned long pfn = start_pfn;
+	struct page *page;
+	struct page_ext *page_ext;
+	int page_mt;
+
+	for (; pfn < block_end_pfn; pfn++) {
+		if (!pfn_valid_within(pfn))
+			continue;
+
+		page = pfn_to_page(pfn);
+		if (PageBuddy(page)) {
+			pfn += (1UL << page_order(page)) - 1;
+			if (pfn >= block_end_pfn)
+				return true;
+			else
+				continue;
+		}
+
+		if (PageReserved(page))
+			continue;
+
+		page_ext = lookup_page_ext(page);
+
+		if (!test_bit(PAGE_EXT_OWNER, &page_ext->flags))
+			return false;
+
+		page_mt = gfpflags_to_migratetype(page_ext->gfp_mask);
+
+		if (page_mt != MIGRATE_MOVABLE)
+			return false;
+
+		pfn += (1UL << page_ext->order) - 1;
+	}
+	return true;
+}
+
+static int count_movable_in_mixed(struct zone *zone)
+{
+	int mtype, count_movable = 0;
+	unsigned long pfn;
+	unsigned long start_pfn = zone->zone_start_pfn;
+	unsigned long end_pfn = zone_end_pfn(zone);
+
+	for (pfn = start_pfn; pfn < end_pfn; pfn += pageblock_nr_pages) {
+		struct page *page;
+
+		if (!pfn_valid(pfn))
+			continue;
+
+		page = pfn_to_page(pfn);
+
+		/* Watch for unexpected holes punched in the memmap */
+		if (!memmap_valid_within(pfn, page, zone))
+			continue;
+
+		mtype = get_pageblock_migratetype(page);
+
+		if (mtype != MIGRATE_MIXED)
+			continue;
+
+		if (is_pblock_movable(pfn, pfn + pageblock_nr_pages))
+			count_movable++;
+
+	}
+
+	return count_movable;
+
+}
+
+static void fraginfo_show_movable_from_mixed(struct seq_file *m, void *arg)
+{
+	struct zone *zone;
+	int count = 0;
+
+	for_each_populated_zone(zone) {
+		count += count_movable_in_mixed(zone);
+	}
+
+	seq_printf(m, "MovabeinMixed: %d\n", count);
+}
+
 static int fraginfo_show(struct seq_file *m, void *arg)
 {
 	pg_data_t *pgdat = (pg_data_t *)arg;
@@ -1527,6 +1611,7 @@ static int fraginfo_show(struct seq_file *m, void *arg)
 
 	fraginfo_showlargepool(m, pgdat);
 	fraginfo_showmixedstats(m, pgdat);
+	fraginfo_show_movable_from_mixed(m, pgdat);
 
 	return 0;
 }
