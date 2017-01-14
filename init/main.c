@@ -41,6 +41,7 @@
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
 #include <linux/cgroup.h>
+#include <linux/page_block.h>
 #include <linux/efi.h>
 #include <linux/tick.h>
 #include <linux/interrupt.h>
@@ -481,6 +482,7 @@ void __init __weak thread_info_cache_init(void)
  */
 static void __init mm_init(void)
 {
+	page_block_init_flatmem();
 	/*
 	 * page_ext requires contiguous pages,
 	 * bigger than MAX_ORDER unless SPARSEMEM.

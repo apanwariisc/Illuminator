@@ -653,6 +653,7 @@ typedef struct pglist_data {
 	 */
 	spinlock_t node_size_lock;
 #endif
+	struct page_block *node_page_block;
 	unsigned long node_start_pfn;
 	unsigned long node_present_pages; /* total number of physical pages */
 	unsigned long node_spanned_pages; /* total size of physical page
