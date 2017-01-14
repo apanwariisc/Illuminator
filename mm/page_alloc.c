@@ -51,6 +51,7 @@
 #include <linux/fault-inject.h>
 #include <linux/page-isolation.h>
 #include <linux/page_ext.h>
+#include <linux/page_block.h>
 #include <linux/debugobjects.h>
 #include <linux/kmemleak.h>
 #include <linux/compaction.h>
@@ -682,6 +683,8 @@ static inline void __free_one_page(struct page *page,
 
 	VM_BUG_ON_PAGE(page_idx & ((1 << order) - 1), page);
 	VM_BUG_ON_PAGE(bad_range(zone, page), page);
+
+	update_page_block(page, order, migratetype, OP_FREE);
 
 	while (order < max_order - 1) {
 		buddy_idx = __find_buddy_index(page_idx, order);
@@ -1820,6 +1823,8 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order,
 			page = __rmqueue_fallback(zone, order, migratetype);
 	}
 
+	if (page)
+		update_page_block(page, order, migratetype, OP_ALLOC);
 	trace_mm_page_alloc_zone_locked(page, order, migratetype);
 	return page;
 }
