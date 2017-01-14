@@ -66,7 +66,13 @@ static void map_pages(struct list_head *list)
 	}
 }
 
-static inline bool migrate_async_suitable(int migratetype)
+static inline bool migrate_to_async_suitable(int migratetype)
+{
+	return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE ||
+		migratetype == MIGRATE_MIXED;
+}
+
+static inline bool migrate_from_async_suitable(int migratetype)
 {
 	return is_migrate_cma(migratetype) || migratetype == MIGRATE_MOVABLE;
 }
@@ -917,7 +923,7 @@ static bool suitable_migration_target(struct page *page)
 	}
 
 	/* If the block is MIGRATE_MOVABLE or MIGRATE_CMA, allow migration */
-	if (migrate_async_suitable(get_pageblock_migratetype(page)))
+	if (migrate_to_async_suitable(get_pageblock_migratetype(page)))
 		return true;
 
 	/* Otherwise skip the block */
@@ -1149,7 +1155,7 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 		 * of work satisfies the allocation.
 		 */
 		if (cc->mode == MIGRATE_ASYNC &&
-		    !migrate_async_suitable(get_pageblock_migratetype(page)))
+		    !migrate_from_async_suitable(get_pageblock_migratetype(page)))
 			continue;
 
 		/* Perform the isolation */
@@ -1236,8 +1242,11 @@ static int __compact_finished(struct zone *zone, struct compact_control *cc,
 		struct free_area *area = &zone->free_area[order];
 		bool can_steal;
 
-		/* Job done if page is free of the right migratetype */
-		if (!list_empty(&area->free_list[migratetype]))
+		/* Job done if page is free of the right migratetype
+		 * or MIXED migratetype
+		 */
+		if (!list_empty(&area->free_list[migratetype]) ||
+			!list_empty(&area->free_list[MIGRATE_MIXED]))
 			return COMPACT_PARTIAL;
 
 #ifdef CONFIG_CMA
