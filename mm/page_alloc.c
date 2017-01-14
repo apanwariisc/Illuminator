@@ -1995,16 +1995,12 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order,
 	if (!page)
 		page = __rmqueue_smallest(zone, order, MIGRATE_MIXED);
 
-	if (unlikely(!page)) {
-		if (migratetype == MIGRATE_MOVABLE)
-			page = __rmqueue_cma_fallback(zone, order);
-
-		if (!page)
-			page = __rmqueue_fallback(zone, order, migratetype);
-	}
+	if (unlikely(!page))
+		page = __rmqueue_fallback(zone, order, migratetype);
 
 	if (page)
 		update_page_block(page, order, migratetype, OP_ALLOC);
+
 	trace_mm_page_alloc_zone_locked(page, order, migratetype);
 	return page;
 }
