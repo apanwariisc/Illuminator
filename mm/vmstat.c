@@ -928,7 +928,6 @@ static void walk_zones_in_node(struct seq_file *m, pg_data_t *pgdat,
 static char * const migratetype_names[MIGRATE_TYPES] = {
 	"Unmovable",
 	"Movable",
-	"Mixed",
 	"Reclaimable",
 	"HighAtomic",
 #ifdef CONFIG_CMA
@@ -937,6 +936,7 @@ static char * const migratetype_names[MIGRATE_TYPES] = {
 #ifdef CONFIG_MEMORY_ISOLATION
 	"Isolate",
 #endif
+	"Mixed",
 };
 
 static void frag_show_print(struct seq_file *m, pg_data_t *pgdat,
