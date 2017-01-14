@@ -1839,7 +1839,7 @@ __rmqueue_fallback_OPBS(struct zone *zone, unsigned int order, unsigned int star
 		} else {
 			free_best = pageblock_free_pages(best_page);
 			free_page = pageblock_free_pages(page);
-			if (free_best > free_page) {
+			if (free_best >= free_page) {
 				page = best_page;
 				best_area = area;
 				best_order = current_order;
