@@ -195,6 +195,7 @@ struct page {
 
 	/* Private Data pointer for SLUB */
 	/* This holds info on number of objects deferred for freeing */
+	/* 1 - On partial list, 0 - on full list/frozen, 3 - rcu call back */
 	atomic_long_t is_partial;
 
 	/*
