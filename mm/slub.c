@@ -59,6 +59,8 @@ static struct notifier_block slub_idle_work_nb = {
 		    .notifier_call = slub_idle_work,
 };
 
+extern atomic_long_t seed;
+
 #define incr_def_count(s, page) update_def_count(s, page, 1);
 #define decr_def_count(s, page) update_def_count(s, page, 0);
 
@@ -1623,7 +1625,7 @@ static void discard_slab(struct kmem_cache *s, struct page *page)
 static inline void
 __add_partial(struct kmem_cache_node *n, struct page *page, int tail)
 {
-	if (!atomic_long_read(&page->is_partial)) {
+	if (atomic_long_read(&page->is_partial) == 0) {
 		atomic_long_set(&page->is_partial, 1);
 		n->nr_partial++;
 		if (tail == DEACTIVATE_TO_TAIL)
@@ -2678,7 +2680,8 @@ static void inline merge_page_list(struct kmem_cache *s, struct page *page,
 #endif
 }
 
-static void pre_move_page(struct kmem_cache *s, struct page *page)
+static void pre_move_page(struct kmem_cache *s, struct page *page,
+		unsigned long count)
 {
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
 	struct gp_cache_data *cache_next, *cache_wait;
@@ -2696,17 +2699,25 @@ static void pre_move_page(struct kmem_cache *s, struct page *page)
 	cache_wait = &page->gp_cache[C_WAIT];
 
 	if (unlikely(n->nr_partial >= s->min_partial &&
-			(cache_next->def_count + cache_wait->def_count) == page->inuse)) {
+			(count + cache_wait->def_count) == page->inuse)) {
 
 		spin_lock_irqsave(&n->list_lock, flags);
+
+		/* process_idle function could already have discarded this slab */
+		if (atomic_long_read(&page->is_partial) == 2) {
+			spin_unlock_irqrestore(&n->list_lock, flags);
+			return;
+		}
+
 		stat_count(s, FREE_SLOWPATH,
-				(unsigned)(cache_wait->def_count + cache_next->def_count));
+				(unsigned)(cache_wait->def_count + count));
 		remove_partial(n, page);
-		stat(s, FREE_REMOVE_PARTIAL);
+		atomic_long_set(&page->is_partial, 2);
+		discard_slab(s, page);
 		spin_unlock_irqrestore(&n->list_lock, flags);
 
+		stat(s, FREE_REMOVE_PARTIAL);
 		stat(s, FREE_SLAB);
-		discard_slab(s, page);
 
 		return;
 	}
@@ -2715,7 +2726,7 @@ static void pre_move_page(struct kmem_cache *s, struct page *page)
 	 * Check if the page is on partial list without node list lock
 	 * and try to add partial list holding a lock.
 	 */
-	if (!atomic_long_read(&page->is_partial)) {
+	if (atomic_long_read(&page->is_partial) == 0) {
 		spin_lock_irqsave(&n->list_lock, flags);
 		add_partial(n, page, DEACTIVATE_TO_TAIL);
 		stat(s, FREE_ADD_PARTIAL);
@@ -2910,8 +2921,9 @@ static short process_idle(struct kmem_cache *s)
 
 	c = this_cpu_ptr(s->cpu_slab);
 
-	if (unlikely(cpu && !(cpu % 15)))
-		n = get_node(s, cpupid_to_nid(cpu));
+	if (unlikely(cpu == s->seed || cpu == (s->seed + 8) ||
+				cpu == (s->seed + 16) || cpu == (s->seed + 24)))
+		n = get_node(s, numa_mem_id());
 
 	if (cur_gp != c->gp_seq) {
 		calculate_avg(s, c, cur_gp);
@@ -3009,10 +3021,11 @@ page_process:
 			stat_count(s, FREE_SLOWPATH,
 					(unsigned)(cache_wait->def_count + cache_next->def_count));
 			remove_partial(n, page);
-			stat(s, FREE_REMOVE_PARTIAL);
-
-			stat(s, FREE_SLAB);
+			atomic_long_set(&page->is_partial, 2);
 			discard_slab(s, page);
+
+			stat(s, FREE_REMOVE_PARTIAL);
+			stat(s, FREE_SLAB);
 
 		} else {
 			handle_page_lists(s, page);
@@ -3669,7 +3682,7 @@ static void inline pre_reap_page(struct kmem_cache *s,
 		slab_unlock(page);
 	}
 
-	pre_move_page(s, page);
+	pre_move_page(s, page, new_count);
 }
 
 static void slab_free_deferred(struct kmem_cache *s,
@@ -4387,8 +4400,17 @@ static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
 		goto error1;
 
 	/* If SLAB can have deferred objects, add to idle work list */
-	if (s->flags & SLAB_DEF_FREE)
+	if (s->flags & SLAB_DEF_FREE) {
 		list_add(&s->def_list, &slab_def_caches);
+		s->seed = atomic_long_read(&seed);
+		atomic_long_inc(&seed);
+		if (atomic_long_read(&seed) == 8)
+			atomic_long_set(&seed, 33);
+		else if (atomic_long_read(&seed) == 63)
+			atomic_long_set(&seed, 1);
+
+		pr_info("Slab = %s, seed = %d\n", s->name, s->seed);
+	}
 
 	return 0;
 
@@ -4916,6 +4938,8 @@ void __init kmem_cache_init(void)
 
 	kmem_cache_node = &boot_kmem_cache_node;
 	kmem_cache = &boot_kmem_cache;
+
+	atomic_long_set(&seed, 1);
 
 	create_boot_cache(kmem_cache_node, "kmem_cache_node",
 		sizeof(struct kmem_cache_node), SLAB_HWCACHE_ALIGN);

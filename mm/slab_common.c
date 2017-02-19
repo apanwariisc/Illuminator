@@ -31,6 +31,7 @@ LIST_HEAD(slab_def_caches);
 DEFINE_MUTEX(slab_mutex);
 struct kmem_cache *kmem_cache;
 DEFINE_PER_CPU(struct kmem_cache *, last_processed) = NULL;
+atomic_long_t seed;
 
 /*
  * Set of flags that will prevent slab merging
