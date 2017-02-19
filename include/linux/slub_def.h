@@ -46,7 +46,6 @@ struct kmem_cache_cpu {
 	unsigned int alloc_count;
 	unsigned int total_objs;
 	unsigned long gp_seq;	/* To calc avg alloc rate*/
-	unsigned int need_work;
 	unsigned int alloc_rate;
 	struct gp_cache_data gp_cache[2];	/* gp based caches */
 	unsigned int prev_alloc[3];

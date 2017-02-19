@@ -2542,7 +2542,6 @@ static inline void flip_next_wait_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
-		c->need_work = true;
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 	}
 
@@ -2576,7 +2575,6 @@ static inline void merge_to_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
-		c->need_work = true;
 
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 
@@ -2598,7 +2596,6 @@ static inline void merge_to_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_next->freelist;
 		c->total_objs += cache_next->def_count;
-		c->need_work = true;
 
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_next->def_count);
 
@@ -2854,11 +2851,10 @@ static int handle_page_lists(struct kmem_cache *s, struct page *page)
 static inline void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
-#if 0
 	c->gp_seq = cur_gp;
+#if 0
 	c->alloc_rate = c->alloc_count;
 	c->alloc_count = 0;
-#endif
 
 	unsigned short i = cur_gp % 3;
 
@@ -2897,7 +2893,6 @@ static inline void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	c->alloc_count = 0;
 	c->gp_seq = cur_gp;
 
-#if 0
 	/* Consider free rate. If we are free rate and previous def count */
 	if (c->alloc_rate < (oo_objects(s->oo) / 2))
 		c->alloc_rate = oo_objects(s->oo) / 2;
@@ -3314,7 +3309,6 @@ redo:
 	}
 
 	c->total_objs--;
-	c->alloc_count++;
 
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
@@ -3378,7 +3372,6 @@ b1:
 	}
 
 	c->total_objs--;
-	c->alloc_count++;
 
 	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
 			c->alloc_count, "alloc", s->name);
@@ -3697,18 +3690,15 @@ static void inline pre_reap_page(struct kmem_cache *s,
 static void slab_free_deferred(struct kmem_cache *s,
 		struct page *page, void *x, unsigned long addr)
 {
-	if (page_to_nid(page) != numa_node_id()) {
-#if 0
-		||
-			(c->total_objs > (oo_objects(s->oo) * 2) &&
-			 c->alloc_rate < (oo_objects(s->oo) / 2))) {
-#endif
+	struct kmem_cache_cpu *c = this_cpu_ptr(s->cpu_slab);
+
+	if (page_to_nid(page) != numa_node_id() ||
+			page != c->page) {
 		pre_reap_page(s, page, x);
 	} else {
 		void **object = (void *)x;
 		struct gp_cache_data *cache_next;
 		unsigned long cur_gp = get_state_rcu_gpnum();
-		struct kmem_cache_cpu *c = this_cpu_ptr(s->cpu_slab);
 
 		/* FIXME: If an interrupt occurs at this place and performs a
 		 * a slab_free_def on the same slab, then there is a possibility
@@ -4991,7 +4981,7 @@ void __init kmem_cache_init_late(void)
 	}
 
 	/* Register notifier for CPU Idle work */
-	idle_notifier_register(&slub_idle_work_nb);
+	/* idle_notifier_register(&slub_idle_work_nb); */
 }
 
 struct kmem_cache *
