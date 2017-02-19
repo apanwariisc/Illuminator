@@ -1713,6 +1713,62 @@ static inline bool pfmemalloc_match(struct page *page, gfp_t gfpflags);
 static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 				struct kmem_cache_cpu *c, gfp_t flags)
 {
+	struct page *page, *page2, *best = NULL:
+	void *object = NULL;
+	int objects, count = 10;
+	int best_future = 0, best_avl = 0;
+
+	/*
+	 * Racy check. If we mistakenly see no partial slabs then we
+	 * just allocate an empty slab. If we mistakenly try to get a
+	 * partial slab and there is none available then get_partials()
+	 * will return NULL.
+	 */
+	if (!n || !n->nr_partial)
+		return NULL;
+
+	spin_lock(&n->list_lock);
+	list_for_each_entry_safe(page, page2, &n->partial, lru) {
+		void *t;
+		int future_avl, cur_avl;
+
+		if (!pfmemalloc_match(page, flags))
+			continue;
+
+		future_avl = handle_page_lists(s, page);
+		cur_avl = page->objects - page->inuse;
+		if (!cur_avl)
+			continue;
+
+		if (cur_avl > best_avl && ((future_avl + cur_avl) > (best_future + best_avl))) {
+			best = page;
+			best_future = future_avl;
+			best_avl = cur_avl;
+		}
+
+		if (count--)
+			break;
+	}
+
+	if (!best)
+		goto out;
+
+	object = acquire_slab(s, n, best, 1, &objects);
+	if (!object)
+		goto out;
+
+	c->page = best;
+	stat(s, ALLOC_FROM_PARTIAL);
+	c->total_objs += objects;
+out:
+	spin_unlock(&n->list_lock);
+	return object;
+}
+
+#if 0
+static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
+				struct kmem_cache_cpu *c, gfp_t flags)
+{
 	struct page *page, *page2;
 	void *object = NULL;
 	int available = 0;
@@ -1760,6 +1816,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 	c->total_objs += available;
 	return object;
 }
+#endif
 
 /*
  * Get a page from somewhere. Search in increasing NUMA distances.
@@ -2418,34 +2475,78 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 static void __always_inline update_def_count(struct kmem_cache *s,
 				struct page *page, bool incr)
 {
-	if (incr)
+	if (incr) {
 		atomic_long_inc(&page->deferred);
-	else
+		WARN_ON(!s);
+		stat(s, HINTS);
+	}
+	else {
 		atomic_long_dec(&page->deferred);
+	}
 }
 
 void kmem_cache_free_hint(struct kmem_cache *s, void *x)
 {
+	WARN_ON(!x);
+	incr_def_count(s, virt_to_head_page(x));
+
 	return;
 }
 EXPORT_SYMBOL(kmem_cache_free_hint);
 
 void kmem_cache_free_unhint(struct kmem_cache *s, void *x)
 {
-	kmem_cache_free(s, x);
+	WARN_ON(!x);
+
+	struct page *page = virt_to_head_page(x);
+
+	s = cache_from_obj(s, x);
+	if (!s)
+		return;
+
+	decr_def_count(s, page);
+
+	slab_free(s, page, x, NULL, 1,  _RET_IP_);
+	trace_kmem_cache_free(_RET_IP_, x);
 	return;
 }
 EXPORT_SYMBOL(kmem_cache_free_unhint);
 
 void kfree_hint(const void *x)
 {
+	struct page *page;
+
+	if (unlikely(ZERO_OR_NULL_PTR(x)))
+		return;
+
+	page = virt_to_head_page(x);
+
+	incr_def_count(page->slab_cache, page);
+
 	return;
 }
 EXPORT_SYMBOL(kfree_hint);
 
 void kfree_unhint(const void *x)
 {
-	kfree(x);
+	struct page *page;
+	void *object = (void *)x;
+
+	trace_kfree(_RET_IP_, x);
+
+	if (unlikely(ZERO_OR_NULL_PTR(x)))
+		return;
+
+	page = virt_to_head_page(x);
+	decr_def_count(page->slab_cache, page);
+	if (unlikely(!PageSlab(page))) {
+		BUG_ON(!PageCompound(page));
+		kfree_hook(x);
+		__free_kmem_pages(page, compound_order(page));
+		return;
+	}
+
+	slab_free(page->slab_cache, page, NULL, 1, object,_RET_IP_);
 	return;
 }
 EXPORT_SYMBOL(kfree_unhint);
@@ -2702,7 +2803,7 @@ static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
 }
 
 /* TODO: Merge with above function */
-static void handle_page_lists(struct kmem_cache *s, struct page *page)
+static unsigned int handle_page_lists(struct kmem_cache *s, struct page *page)
 {
 	struct gp_cache_data *cache_next, *cache_wait;
 	unsigned long completed_gp = get_state_rcu_gpcompleted();
@@ -2711,7 +2812,7 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 	cache_wait = &page->gp_cache[C_WAIT];
 
 	if (!cache_next->gp_seq && !cache_wait->gp_seq)
-		return;
+		return 0;
 
 	slab_lock(page);
 	if (cache_next->gp_seq && cache_next->gp_seq <= completed_gp) {
@@ -2764,6 +2865,7 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 		merge_page_list(s, page, cache_wait, false);
 	}
 	slab_unlock(page);
+	return cache_wait->def_count + cache_next->def_count;
 }
 
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
@@ -6108,6 +6210,7 @@ STAT_ATTR(CPU_PARTIAL_NODE, cpu_partial_node);
 STAT_ATTR(CPU_PARTIAL_DRAIN, cpu_partial_drain);
 STAT_ATTR(ALLOC_FAST_PATH_RCU, alloc_fast_path_rcu);
 STAT_ATTR(DEFERRED_FREE, deferred_free);
+STAT_ATTR(HINTS, hints);
 #endif
 
 static struct attribute *slab_attrs[] = {
@@ -6179,6 +6282,7 @@ static struct attribute *slab_attrs[] = {
 	&peak_slab_attr.attr,
 	&alloc_fast_path_rcu_attr.attr,
 	&deferred_free_attr.attr,
+	&hints_attr.attr,
 #endif
 #ifdef CONFIG_FAILSLAB
 	&failslab_attr.attr,
