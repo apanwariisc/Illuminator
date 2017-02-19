@@ -9,7 +9,7 @@ struct gp_cache_data{
 };
 
 enum gp_cache_index {
-	C_WAIT,
-	C_NEXT };
+	C_NEXT,
+	C_WAIT };
 
 #endif /* _LINUX_SLUB_DEF_P_H */

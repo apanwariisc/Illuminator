@@ -37,7 +37,6 @@ enum stat_item {
 	CPU_PARTIAL_DRAIN,	/* Drain cpu partial to node partial */
 	ALLOC_FAST_PATH_RCU,    /* Allocation from RCU deferred list */
 	DEFERRED_FREE,      /* Freeing deferred until next grace period  */
-	HINTS,				/* Number of hints for this cache */
 	NR_SLUB_STAT_ITEMS };
 
 struct kmem_cache_cpu {
@@ -45,16 +44,13 @@ struct kmem_cache_cpu {
 	unsigned long tid;	/* Globally unique transaction id */
 	struct page *page;	/* The slab from which we are allocating */
 	unsigned int alloc_count;
-	unsigned int free_count;
 	unsigned int total_objs;
-	struct gp_cache_data gp_cache[2];	/* gp based caches */
-	struct page *partial;	/* Partially allocated frozen slabs */
-	unsigned int prev_alloc[3];
-	unsigned int prev_free[3];
 	unsigned long gp_seq;	/* To calc avg alloc rate*/
-	int alloc_rate;
-	int free_rate;
-	bool need_work;
+	unsigned int need_work;
+	unsigned int alloc_rate;
+	struct gp_cache_data gp_cache[2];	/* gp based caches */
+	unsigned int prev_alloc[3];
+	struct page *partial;	/* Partially allocated frozen slabs */
 #ifdef CONFIG_SLUB_STATS
 	unsigned stat[NR_SLUB_STAT_ITEMS];
 #endif
