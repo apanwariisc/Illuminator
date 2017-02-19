@@ -476,6 +476,57 @@ TRACE_EVENT(new_slab,
 		__entry->slab)
 );
 
+TRACE_EVENT(slub_page,
+
+	TP_PROTO(unsigned long gp, int cpu,
+		unsigned long gp1, unsigned int def1,
+		unsigned long gp2, unsigned int def2,
+		unsigned int inuse, unsigned int free, unsigned int part, unsigned int min, const char *slab),
+
+	TP_ARGS(gp, cpu, gp1, def1, gp2, def2, inuse, free, part, min, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        unsigned long, gp1   )
+		__field(        unsigned int, def1   )
+		__field(        unsigned long, gp2   )
+		__field(        unsigned int, def2   )
+		__field(        unsigned int, inuse  )
+		__field(        unsigned int, free   )
+		__field(        unsigned int, part   )
+		__field(        unsigned int, min    )
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->gp1 = gp1;
+		__entry->def1 = def1;
+		__entry->gp2 = gp2;
+		__entry->def2 = def2;
+		__entry->inuse = inuse;
+		__entry->free = free;
+		__entry->part = part;
+		__entry->min = min;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d gp1=%ld, def1=%d, gp2=%ld, def2=%d, inuse=%d, free=%d, nr_partial=%d, min_partial=%d, slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->gp1,
+		__entry->def1,
+		__entry->gp2,
+		__entry->def2,
+		__entry->inuse,
+		__entry->free,
+		__entry->part,
+		__entry->min,
+		__entry->slab)
+);
+
 TRACE_EVENT(merge_page,
 
 	TP_PROTO(unsigned long gp, int cpu, int was_frozen,
