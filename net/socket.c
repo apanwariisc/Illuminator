@@ -250,7 +250,7 @@ static struct inode *sock_alloc_inode(struct super_block *sb)
 	ei = kmem_cache_alloc(sock_inode_cachep, GFP_KERNEL);
 	if (!ei)
 		return NULL;
-	wq = kmalloc(sizeof(*wq), GFP_KERNEL);
+	wq = kmalloc_def(sizeof(*wq), GFP_KERNEL);
 	if (!wq) {
 		kmem_cache_free(sock_inode_cachep, ei);
 		return NULL;
