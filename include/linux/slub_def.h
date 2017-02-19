@@ -35,12 +35,29 @@ enum stat_item {
 	CPU_PARTIAL_FREE,	/* Refill cpu partial on free */
 	CPU_PARTIAL_NODE,	/* Refill cpu partial from node partial */
 	CPU_PARTIAL_DRAIN,	/* Drain cpu partial to node partial */
+	ALLOC_FAST_PATH_RCU,    /* Allocation from RCU deferred list */
+	DEFERRED_FREE,      /* Freeing deferred until next grace period  */
 	NR_SLUB_STAT_ITEMS };
+
+struct gp_cache_data{
+	void **freelist;
+	unsigned long gp_seq;
+	void *last;		/* Pointer to last object */
+	unsigned def_count;
+};
+
+enum gp_cache_index {
+	C_WAIT,
+	C_NEXT };
 
 struct kmem_cache_cpu {
 	void **freelist;	/* Pointer to next available object */
 	unsigned long tid;	/* Globally unique transaction id */
 	struct page *page;	/* The slab from which we are allocating */
+	unsigned int alloc_count;
+	unsigned int free_count;
+	unsigned int total_objs;
+	struct gp_cache_data gp_cache[2];	/* gp based caches */
 	struct page *partial;	/* Partially allocated frozen slabs */
 #ifdef CONFIG_SLUB_STATS
 	unsigned stat[NR_SLUB_STAT_ITEMS];

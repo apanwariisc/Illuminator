@@ -146,6 +146,9 @@ void memcg_destroy_kmem_caches(struct mem_cgroup *);
 void * __must_check __krealloc(const void *, size_t, gfp_t);
 void * __must_check krealloc(const void *, size_t, gfp_t);
 void kfree(const void *);
+void kfree_hint(const void *);
+void kfree_unhint(const void *);
+void kfree_deferred(const void *, struct rcu_head *);
 void kzfree(const void *);
 size_t ksize(const void *);
 
@@ -310,8 +313,13 @@ static __always_inline int kmalloc_index(size_t size)
 #endif /* !CONFIG_SLOB */
 
 void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment;
+void *__kmalloc_def(size_t size, gfp_t flags) __assume_kmalloc_alignment;
 void *kmem_cache_alloc(struct kmem_cache *, gfp_t flags) __assume_slab_alignment;
+void *kmem_cache_alloc_def(struct kmem_cache *, gfp_t flags) __assume_slab_alignment;
 void kmem_cache_free(struct kmem_cache *, void *);
+void kmem_cache_free_deferred(struct kmem_cache *, void *, struct rcu_head *);
+void kmem_cache_free_hint(struct kmem_cache *s, void *x);
+void kmem_cache_free_unhint(struct kmem_cache *s, void *x);
 
 /*
  * Bulk allocation and freeing operations. These are accellerated in an
@@ -326,6 +334,8 @@ int kmem_cache_alloc_bulk(struct kmem_cache *, gfp_t, size_t, void **);
 #ifdef CONFIG_NUMA
 void *__kmalloc_node(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment;
 void *kmem_cache_alloc_node(struct kmem_cache *, gfp_t flags, int node) __assume_slab_alignment;
+void *kmem_cache_alloc_node_def(struct kmem_cache *, gfp_t flags, int node) __assume_slab_alignment;
+
 #else
 static __always_inline void *__kmalloc_node(size_t size, gfp_t flags, int node)
 {
@@ -468,6 +478,26 @@ static __always_inline void *kmalloc(size_t size, gfp_t flags)
 	return __kmalloc(size, flags);
 }
 
+static __always_inline void *kmalloc_def(size_t size, gfp_t flags)
+{
+	if (__builtin_constant_p(size)) {
+		if (size > KMALLOC_MAX_CACHE_SIZE)
+			return kmalloc_large(size, flags);
+#ifndef CONFIG_SLOB
+		if (!(flags & GFP_DMA)) {
+			int index = kmalloc_index(size);
+
+			if (!index)
+				return ZERO_SIZE_PTR;
+
+			return kmem_cache_alloc_trace(kmalloc_caches[index],
+					flags, size);
+		}
+#endif
+	}
+	return __kmalloc_def(size, flags);
+}
+
 /*
  * Determine size used for the nth kmalloc cache.
  * return size or 0 if a kmalloc cache for that
@@ -595,6 +625,11 @@ extern void *__kmalloc_node_track_caller(size_t, gfp_t, int, unsigned long);
 static inline void *kmem_cache_zalloc(struct kmem_cache *k, gfp_t flags)
 {
 	return kmem_cache_alloc(k, flags | __GFP_ZERO);
+}
+
+static inline void *kmem_cache_zalloc_def(struct kmem_cache *k, gfp_t flags)
+{
+	return kmem_cache_alloc_def(k, flags | __GFP_ZERO);
 }
 
 /**

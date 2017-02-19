@@ -39,6 +39,13 @@
 
 #include "internal.h"
 
+static void slab_free(struct kmem_cache *s, struct page *page,
+		void *head, void *tail, int cnt,
+		unsigned long addr);
+static void __slab_free(struct kmem_cache *s, struct page *page,
+		void *head, void *tail, int cnt,
+		unsigned long addr);
+
 #define incr_def_count(s, page) update_def_count(s, page, 1);
 #define decr_def_count(s, page) update_def_count(s, page, 0);
 
@@ -1699,6 +1706,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 
 	}
 	spin_unlock(&n->list_lock);
+	c->total_objs += available;
 	return object;
 }
 
@@ -1849,9 +1857,16 @@ static inline void note_cmpxchg_failure(const char *n,
 static void init_kmem_cache_cpus(struct kmem_cache *s)
 {
 	int cpu;
+	struct kmem_cache_cpu *c;
 
-	for_each_possible_cpu(cpu)
-		per_cpu_ptr(s->cpu_slab, cpu)->tid = init_tid(cpu);
+	for_each_possible_cpu(cpu) {
+	   c = per_cpu_ptr(s->cpu_slab, cpu);
+	   c->tid = init_tid(cpu);
+	   memset(&c->gp_cache, 0, sizeof(struct gp_cache_data) * 2);
+	   c->alloc_count = 0;
+	   c->free_count = 0;
+	   c->total_objs = 0;
+	}
 }
 
 /*
@@ -2278,6 +2293,8 @@ static inline void *new_slab_objects(struct kmem_cache *s, gfp_t flags,
 		freelist = page->freelist;
 		page->freelist = NULL;
 
+		c->total_objs += page->objects;
+
 		stat(s, ALLOC_SLAB);
 		c->page = page;
 		*pc = c;
@@ -2310,6 +2327,7 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 	struct page new;
 	unsigned long counters;
 	void *freelist;
+	unsigned int new_free;
 
 	do {
 		freelist = page->freelist;
@@ -2318,6 +2336,8 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 		new.counters = counters;
 		VM_BUG_ON(!new.frozen);
 
+		new_free = page->objects - new.inuse;
+
 		new.inuse = page->objects;
 		new.frozen = freelist != NULL;
 
@@ -2325,6 +2345,14 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 		freelist, counters,
 		NULL, new.counters,
 		"get_freelist"));
+
+	if (new_free) {
+		struct kmem_cache_cpu *c;
+
+		VM_BUG_ON(!freelist);
+		c = this_cpu_ptr(s->cpu_slab);
+		c->total_objs += new_free;
+	}
 
 	return freelist;
 }
@@ -2336,6 +2364,133 @@ static void __always_inline update_def_count(struct kmem_cache *s,
 		atomic_long_inc(&page->deferred);
 	else
 		atomic_long_dec(&page->deferred);
+}
+
+void kmem_cache_free_hint(struct kmem_cache *s, void *x)
+{
+	return;
+}
+EXPORT_SYMBOL(kmem_cache_free_hint);
+
+void kmem_cache_free_unhint(struct kmem_cache *s, void *x)
+{
+	kmem_cache_free(s, x);
+	return;
+}
+EXPORT_SYMBOL(kmem_cache_free_unhint);
+
+void kfree_hint(const void *x)
+{
+	return;
+}
+EXPORT_SYMBOL(kfree_hint);
+
+void kfree_unhint(const void *x)
+{
+	kfree(x);
+	return;
+}
+EXPORT_SYMBOL(kfree_unhint);
+
+static inline void flip_next_wait_current(struct kmem_cache *s,
+		struct kmem_cache_cpu *c)
+{
+	struct gp_cache_data *cache_next, *cache_wait;
+	void **object;
+
+	cache_next = &c->gp_cache[C_NEXT];
+	cache_wait = &c->gp_cache[C_WAIT];
+
+	/* Move wait list to current */
+	if (cache_wait->freelist) {
+		object = cache_wait->last;
+		set_freepointer(s, object, c->freelist);
+		c->freelist = cache_wait->freelist;
+		c->total_objs += cache_wait->def_count;
+	}
+
+	if (cache_next->freelist) {
+		/* Move next list to wait */
+		cache_wait->freelist = cache_next->freelist;
+		cache_wait->last = cache_next->last;
+		cache_wait->gp_seq = cache_next->gp_seq;
+		cache_wait->def_count = cache_next->def_count;
+
+		/* Reset next list */
+		cache_next->freelist = NULL;
+		cache_next->gp_seq = 0;
+		cache_next->def_count = 0;
+		cache_next->last = NULL;
+	}
+}
+
+static inline void merge_to_current(struct kmem_cache *s,
+		struct kmem_cache_cpu *c, bool all)
+{
+	struct gp_cache_data *cache_next, *cache_wait;
+	void **object;
+
+	cache_next = &c->gp_cache[C_NEXT];
+	cache_wait = &c->gp_cache[C_WAIT];
+
+	/* Move wait list to current */
+	if (cache_wait->freelist) {
+		object = cache_wait->last;
+		set_freepointer(s, object, c->freelist);
+		c->freelist = cache_wait->freelist;
+		c->total_objs += cache_wait->def_count;
+
+		/* Reset wait list */
+		cache_wait->freelist = NULL;
+		cache_wait->gp_seq = 0;
+		cache_wait->def_count = 0;
+		cache_wait->last = NULL;
+	}
+
+	VM_BUG_ON(cache_wait->gp_seq || cache_wait->def_count);
+
+	if (!all)
+		return;
+
+	/* Move next list to current */
+	if (cache_next->freelist) {
+		object = cache_next->last;
+		set_freepointer(s, object, c->freelist);
+		c->freelist = cache_next->freelist;
+		c->total_objs += cache_next->def_count;
+
+		/* Reset next list */
+		cache_next->freelist = NULL;
+		cache_next->gp_seq = 0;
+		cache_next->def_count = 0;
+		cache_next->last = NULL;
+	}
+
+	VM_BUG_ON(cache_next->gp_seq || cache_next->def_count);
+}
+
+static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
+		unsigned long cur_gp)
+{
+	struct gp_cache_data *cache_next, *cache_wait;
+	unsigned long completed_gp = get_state_rcu_gpcompleted();
+
+	cache_next = &c->gp_cache[C_NEXT];
+	cache_wait = &c->gp_cache[C_WAIT];
+
+	if (cache_next->gp_seq && cache_next->gp_seq <= completed_gp) {
+		/* Merge to current list */
+		merge_to_current(s, c, true);
+	} else if (cache_next->gp_seq == cur_gp) {
+		/*
+		 * A grace period has passed. Flip wait to current and
+		 * next to wait.
+		 */
+		flip_next_wait_current(s, c);
+	} else if (cache_wait->gp_seq && cache_wait->gp_seq <= completed_gp) {
+		/* Elements in wait list are safe */
+		merge_to_current(s, c, false);
+	}
 }
 
 /*
@@ -2423,13 +2578,7 @@ load_freelist:
 
 new_slab:
 
-	if (c->partial) {
-		page = c->page = c->partial;
-		c->partial = page->next;
-		stat(s, CPU_PARTIAL_ALLOC);
-		c->freelist = NULL;
-		goto redo;
-	}
+	VM_BUG_ON(c->partial);
 
 	freelist = new_slab_objects(s, gfpflags, node, &c);
 
@@ -2536,6 +2685,7 @@ redo:
 	object = c->freelist;
 	page = c->page;
 	if (unlikely(!object || !node_match(page, node))) {
+		VM_BUG_ON(c->total_objs);
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 		stat(s, ALLOC_SLOWPATH);
 	} else {
@@ -2567,6 +2717,58 @@ redo:
 		stat(s, ALLOC_FASTPATH);
 	}
 
+	c->total_objs--;
+
+	if (unlikely(gfpflags & __GFP_ZERO) && object)
+		memset(object, 0, s->object_size);
+
+	slab_post_alloc_hook(s, gfpflags, 1, object);
+
+	return object;
+}
+
+static __always_inline void *slab_alloc_node_def(struct kmem_cache *s,
+		gfp_t gfpflags, int node, unsigned long addr)
+{
+	void **object;
+	struct kmem_cache_cpu *c;
+	unsigned long tid;
+
+	if (slab_pre_alloc_hook(s, gfpflags))
+		return NULL;
+
+	s = memcg_kmem_get_cache(s, gfpflags);
+redo:
+	preempt_disable();
+	c = this_cpu_ptr(s->cpu_slab);
+
+	tid = c->tid;
+	preempt_enable();
+
+	object = c->freelist;
+	if (unlikely(!object)) {
+		/* Fliping and merging can be considered */
+		VM_BUG_ON(c->total_objs);
+		object = __slab_alloc(s, gfpflags, node, addr, c);
+		stat(s, ALLOC_SLOWPATH);
+	} else {
+		void *next_object = get_freepointer_safe(s, object);
+
+		if (unlikely(!this_cpu_cmpxchg_double(
+				s->cpu_slab->freelist, s->cpu_slab->tid,
+				object, tid,
+				next_object, next_tid(tid)))) {
+
+			note_cmpxchg_failure("slab_alloc", s, tid);
+			goto redo;
+		}
+		prefetch_freepointer(s, next_object);
+		stat(s, ALLOC_FASTPATH);
+	}
+
+	c->total_objs--;
+	c->alloc_count++;
+
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
 
@@ -2592,6 +2794,23 @@ void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags)
 }
 EXPORT_SYMBOL(kmem_cache_alloc);
 
+static __always_inline void *slab_alloc_def(struct kmem_cache *s,
+		gfp_t gfpflags, unsigned long addr)
+{
+	return slab_alloc_node_def(s, gfpflags, NUMA_NO_NODE, addr);
+}
+
+void *kmem_cache_alloc_def(struct kmem_cache *s, gfp_t gfpflags)
+{
+	void *ret = slab_alloc_def(s, gfpflags, _RET_IP_);
+
+	trace_kmem_cache_alloc(_RET_IP_, ret, s->object_size,
+				s->size, gfpflags);
+
+	return ret;
+}
+EXPORT_SYMBOL(kmem_cache_alloc_def);
+
 #ifdef CONFIG_TRACING
 void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
@@ -2614,6 +2833,17 @@ void *kmem_cache_alloc_node(struct kmem_cache *s, gfp_t gfpflags, int node)
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
+
+void *kmem_cache_alloc_node_def(struct kmem_cache *s, gfp_t gfpflags, int node)
+{
+	void *ret = slab_alloc_node_def(s, gfpflags, node, _RET_IP_);
+
+	trace_kmem_cache_alloc_node(_RET_IP_, ret,
+				    s->object_size, s->size, gfpflags, node);
+
+	return ret;
+}
+EXPORT_SYMBOL(kmem_cache_alloc_node_def);
 
 #ifdef CONFIG_TRACING
 void *kmem_cache_alloc_node_trace(struct kmem_cache *s,
@@ -2808,9 +3038,40 @@ redo:
 			goto redo;
 		}
 		stat(s, FREE_FASTPATH);
+		c->total_objs++;
 	} else
 		__slab_free(s, page, head, tail_obj, cnt, addr);
 
+	c->free_count++;
+}
+
+static void slab_free_deferred(struct kmem_cache *s,
+		struct page *page, void *x, unsigned long addr,
+		struct rcu_head *head)
+{
+	struct kmem_cache_cpu *c;
+	void **object = (void *)x;
+	struct gp_cache_data *cache_next;
+	unsigned long cur_gp = get_state_rcu_gpnum();
+
+	c = __this_cpu_ptr(s->cpu_slab);
+	cache_next = &c->gp_cache[C_NEXT];
+
+	/* Handle list move operations depending on the grace
+	   period */
+	handle_lists(s, c, cur_gp);
+
+	if (unlikely(!cache_next->gp_seq)) {
+		VM_BUG_ON(cache_next->freelist);
+		cache_next->gp_seq = cur_gp + 1;
+		cache_next->last = object;
+	}
+
+	set_freepointer(s, object, cache_next->freelist);
+	cache_next->freelist = object;
+
+	stat(s, DEFERRED_FREE);
+	cache_next->def_count++;
 }
 
 void kmem_cache_free(struct kmem_cache *s, void *x)
@@ -2829,6 +3090,20 @@ struct detached_freelist {
 	void *freelist;
 	int cnt;
 };
+
+void kmem_cache_free_deferred(struct kmem_cache *s, void *x,
+		struct rcu_head *head)
+{
+	WARN_ON(!head);
+
+	s = cache_from_obj(s, x);
+	if (!s || !head)
+		return;
+
+	slab_free_deferred(s, virt_to_head_page(x), x, _RET_IP_, head);
+	trace_kmem_cache_free(_RET_IP_, x);
+}
+EXPORT_SYMBOL(kmem_cache_free_deferred);
 
 /*
  * This function progressively scans the array with free objects (with
@@ -3551,6 +3826,27 @@ void *__kmalloc(size_t size, gfp_t flags)
 }
 EXPORT_SYMBOL(__kmalloc);
 
+void *__kmalloc_def(size_t size, gfp_t flags)
+{
+	struct kmem_cache *s;
+	void *ret;
+
+	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
+		return kmalloc_large(size, flags);
+
+	s = kmalloc_slab(size, flags);
+
+	if (unlikely(ZERO_OR_NULL_PTR(s)))
+		return s;
+
+	ret = slab_alloc_def(s, flags, _RET_IP_);
+
+	trace_kmalloc(_RET_IP_, ret, size, s->size, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL(__kmalloc_def);
+
 #ifdef CONFIG_NUMA
 static void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 {
@@ -3646,6 +3942,25 @@ void kfree(const void *x)
 EXPORT_SYMBOL(kfree);
 
 #define SHRINK_PROMOTE_MAX 32
+
+void kfree_deferred(const void *x, struct rcu_head *head)
+{
+	struct page *page;
+	void *object = (void *)x;
+
+	if (unlikely(ZERO_OR_NULL_PTR(x)))
+		return;
+
+	page = virt_to_head_page(x);
+	if (unlikely(!PageSlab(page))) {
+		BUG_ON(!PageCompound(page));
+		kfree_hook(x);
+		__free_kmem_pages(page, compound_order(page));
+		return;
+	}
+	slab_free_deferred(page->slab_cache, page, object, _RET_IP_, head);
+}
+EXPORT_SYMBOL(kfree_deferred);
 
 /*
  * kmem_cache_shrink discards empty slabs and promotes the slabs filled
@@ -5137,6 +5452,8 @@ STAT_ATTR(CPU_PARTIAL_ALLOC, cpu_partial_alloc);
 STAT_ATTR(CPU_PARTIAL_FREE, cpu_partial_free);
 STAT_ATTR(CPU_PARTIAL_NODE, cpu_partial_node);
 STAT_ATTR(CPU_PARTIAL_DRAIN, cpu_partial_drain);
+STAT_ATTR(ALLOC_FAST_PATH_RCU, alloc_fast_path_rcu);
+STAT_ATTR(DEFERRED_FREE, deferred_free);
 #endif
 
 static struct attribute *slab_attrs[] = {
@@ -5205,6 +5522,8 @@ static struct attribute *slab_attrs[] = {
 	&cpu_partial_node_attr.attr,
 	&cpu_partial_drain_attr.attr,
 	&empty_slab_attr.attr,
+	&alloc_fast_path_rcu_attr.attr,
+	&deferred_free_attr.attr,
 #endif
 #ifdef CONFIG_FAILSLAB
 	&failslab_attr.attr,
