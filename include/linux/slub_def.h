@@ -94,6 +94,7 @@ struct kmem_cache {
 	const char *name;	/* Name (only for display!) */
 	struct list_head list;	/* List of slab caches */
 	struct list_head def_list; /* List of slabs that can have deferred objs */
+	unsigned long peak_slab;
 #ifdef CONFIG_SYSFS
 	struct kobject kobj;	/* For sysfs */
 #endif

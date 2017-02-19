@@ -1432,9 +1432,11 @@ static inline struct page *alloc_slab_page(struct kmem_cache *s,
 static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 {
 	struct page *page;
+	struct kmem_cache_node *n;
 	struct kmem_cache_order_objects oo = s->oo;
 	gfp_t alloc_gfp;
 	void *start, *p;
+	unsigned long nr_slabs = 0;
 	int idx, order;
 
 	flags &= gfp_allowed_mask;
@@ -1512,6 +1514,12 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	page->frozen = 1;
 	memset(&page->gp_cache, 0, sizeof(struct gp_cache_data) * 2);
 
+	for_each_kmem_cache_node(s, node, n) {
+		nr_slabs += node_nr_slabs(n);
+	}
+
+	if (s->peak_slab < nr_slabs)
+		s->peak_slab = nr_slabs;
 out:
 	if (gfpflags_allow_blocking(flags))
 		local_irq_disable();
@@ -5640,7 +5648,26 @@ static ssize_t partial_show(struct kmem_cache *s, char *buf)
 }
 SLAB_ATTR_RO(partial);
 
-static ssize_t empty_slab_store(struct kmem_cache *s, char *buf)
+static ssize_t peak_slab_store(struct kmem_cache *s, const char *buf, size_t length)
+{
+	unsigned long all;
+	int err;
+
+	err = kstrtoul(buf, 10, &all);
+	if (err)
+		return err;
+
+	s->peak_slab = all;
+	return length;
+}
+
+static ssize_t peak_slab_show(struct kmem_cache *s, char *buf)
+{
+	return sprintf(buf, "%lu", s->peak_slab);
+}
+SLAB_ATTR(peak_slab);
+
+static ssize_t empty_slab_store(struct kmem_cache *s, const char *buf, size_t length)
 {
 	unsigned long all;
 	int err;
@@ -5650,6 +5677,7 @@ static ssize_t empty_slab_store(struct kmem_cache *s, char *buf)
 		return err;
 
 	slab_reclaim(s, all);
+	return length;
 }
 
 static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
@@ -6148,6 +6176,7 @@ static struct attribute *slab_attrs[] = {
 	&cpu_partial_node_attr.attr,
 	&cpu_partial_drain_attr.attr,
 	&empty_slab_attr.attr,
+	&peak_slab_attr.attr,
 	&alloc_fast_path_rcu_attr.attr,
 	&deferred_free_attr.attr,
 #endif
