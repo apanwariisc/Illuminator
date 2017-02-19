@@ -37,6 +37,7 @@ enum stat_item {
 	CPU_PARTIAL_DRAIN,	/* Drain cpu partial to node partial */
 	ALLOC_FAST_PATH_RCU,    /* Allocation from RCU deferred list */
 	DEFERRED_FREE,      /* Freeing deferred until next grace period  */
+	HINTS,				/* Number of hints for this cache */
 	NR_SLUB_STAT_ITEMS };
 
 struct kmem_cache_cpu {
