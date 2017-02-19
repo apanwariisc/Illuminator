@@ -47,6 +47,8 @@ static void __slab_free(struct kmem_cache *s, struct page *page,
 		void *head, void *tail, int cnt,
 		unsigned long addr);
 static void handle_page_lists(struct kmem_cache *s, struct page *page);
+static void *slab_alloc_node_def(struct kmem_cache *s,
+		        gfp_t gfpflags, int node, unsigned long addr);
 
 #define incr_def_count(s, page) update_def_count(s, page, 1);
 #define decr_def_count(s, page) update_def_count(s, page, 0);
@@ -2743,17 +2745,24 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 			break;
 		case 2:
 			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
+			c->prev_free[i == 0 ? 2: (i - 1)] = 0;
 			break;
 		case 3:
 			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
 			c->prev_alloc[i == 2 ? 0: (i + 1)] = nr_objs;
+			c->prev_free[i == 0 ? 2: (i - 1)] = 0;
+			c->prev_free[i == 2 ? 0: (i + 1)] = 0;
 			break;
 		default:
 			c->prev_alloc[0] = c->prev_alloc[1] = c->prev_alloc[2] = nr_objs;
+			c->prev_free[0] = c->prev_free[1] = c->prev_free[2] = 0;
 			break;
 	}
 	c->alloc_rate = (c->prev_alloc[0] + c->prev_alloc[1] +
 					c->prev_alloc[2] + c->alloc_count) / 4;
+
+	c->free_rate = (c->prev_free[0] + c->prev_free[1] +
+					c->prev_free[2] + c->free_count) / 4;
 
 	trace_alloc_rate(c->gp_seq, smp_processor_id(), c->prev_alloc[0],
 			c->prev_alloc[1], c->prev_alloc[2], c->alloc_count, c->alloc_rate,
@@ -2764,6 +2773,8 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		c->alloc_rate = nr_objs;
 
 	c->prev_alloc[i] = c->alloc_count;
+	c->prev_free[i] = c->free_count;
+
 	c->alloc_count = 0;
 	c->free_count = 0;
 	c->gp_seq = cur_gp;
@@ -5376,7 +5387,11 @@ static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 	for_each_kmem_cache_node(s, node, n) {
 		struct page *page, *page2;
 		list_for_each_entry_safe(page, page2, &n->partial, lru) {
-			if (!page->inuse)
+			struct gp_cache_data *cache_next = &page->gp_cache[C_NEXT],
+								 *cache_wait = &page->gp_cache[C_WAIT];
+
+			if (!page->inuse || page->inuse == (cache_next->def_count +
+					cache_wait->def_count))
 				empty_slabs++;
 		}
 	}
