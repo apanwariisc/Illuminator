@@ -4139,9 +4139,16 @@ static int kmem_cache_open(struct kmem_cache *s, unsigned long flags)
 	if (!init_kmem_cache_nodes(s))
 		goto error;
 
-	if (alloc_kmem_cache_cpus(s))
-		return 0;
+	if (!alloc_kmem_cache_cpus(s))
+		goto error1;
 
+	/* If SLAB can have deferred objects, add to idle work list */
+	if (s->flags & SLAB_DEF_FREE)
+		list_add(&s->def_list, &slab_def_caches);
+
+	return 0;
+
+error1:
 	free_kmem_cache_nodes(s);
 error:
 	if (flags & SLAB_PANIC)

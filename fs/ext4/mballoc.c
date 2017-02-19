@@ -2839,7 +2839,7 @@ static void ext4_free_data_callback(struct super_block *sb,
 int __init ext4_init_mballoc(void)
 {
 	ext4_pspace_cachep = KMEM_CACHE(ext4_prealloc_space,
-					SLAB_RECLAIM_ACCOUNT);
+					SLAB_RECLAIM_ACCOUNT|SLAB_DEF_FREE);
 	if (ext4_pspace_cachep == NULL)
 		return -ENOMEM;
 
