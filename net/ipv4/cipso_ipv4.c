@@ -558,7 +558,7 @@ void cipso_v4_doi_free(struct cipso_v4_doi *doi_def)
 		kfree(doi_def->map.std->cat.local);
 		break;
 	}
-	kfree(doi_def);
+	kfree_unhint(doi_def);
 }
 
 /**
@@ -612,6 +612,7 @@ int cipso_v4_doi_remove(u32 doi, struct netlbl_audit *audit_info)
 	spin_unlock(&cipso_v4_doi_list_lock);
 
 	cipso_v4_cache_invalidate();
+	kfree_hint(doi_def);
 	call_rcu(&doi_def->rcu, cipso_v4_doi_free_rcu);
 	ret_val = 0;
 
@@ -674,6 +675,7 @@ void cipso_v4_doi_putdef(struct cipso_v4_doi *doi_def)
 	spin_unlock(&cipso_v4_doi_list_lock);
 
 	cipso_v4_cache_invalidate();
+	kfree_hint(doi_def);
 	call_rcu(&doi_def->rcu, cipso_v4_doi_free_rcu);
 }
 

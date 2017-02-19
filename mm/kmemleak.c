@@ -451,7 +451,7 @@ static void free_object_rcu(struct rcu_head *rcu)
 		hlist_del(&area->node);
 		kmem_cache_free(scan_area_cache, area);
 	}
-	kmem_cache_free(object_cache, object);
+	kmem_cache_free_unhint(object_cache, object);
 }
 
 /*
@@ -469,6 +469,7 @@ static void put_object(struct kmemleak_object *object)
 	/* should only get here after delete_object was called */
 	WARN_ON(object->flags & OBJECT_ALLOCATED);
 
+	kmem_cache_free_hint(object_cache, object);
 	call_rcu(&object->rcu, free_object_rcu);
 }
 

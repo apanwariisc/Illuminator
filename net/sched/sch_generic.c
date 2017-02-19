@@ -693,7 +693,10 @@ void qdisc_destroy(struct Qdisc *qdisc)
 	 * gen_estimator est_timer() might access qdisc->q.lock,
 	 * wait a RCU grace period before freeing qdisc.
 	 */
+	kfree_deferred((char *) qdisc - qdisc->padded, &qdisc->rcu_head);
+#if 0
 	call_rcu(&qdisc->rcu_head, qdisc_rcu_free);
+#endif
 }
 EXPORT_SYMBOL(qdisc_destroy);
 

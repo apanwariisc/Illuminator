@@ -360,7 +360,10 @@ static void unlink_from_pool(struct inet_peer *p, struct inet_peer_base *base,
 	}
 	peer_avl_rebalance(stack, stackptr, base);
 	base->total--;
+	kmem_cache_free_deferred(peer_cachep, p, &p->rcu);
+#if 0
 	call_rcu(&p->rcu, inetpeer_free_rcu);
+#endif
 }
 
 /* perform garbage collect on all items stacked during a lookup */

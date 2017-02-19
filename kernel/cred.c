@@ -122,7 +122,7 @@ static void put_cred_rcu(struct rcu_head *rcu)
 		put_group_info(cred->group_info);
 	free_uid(cred->user);
 	put_user_ns(cred->user_ns);
-	kmem_cache_free(cred_jar, cred);
+	kmem_cache_free_unhint(cred_jar, cred);
 }
 
 /**
@@ -146,6 +146,7 @@ void __put_cred(struct cred *cred)
 	BUG_ON(cred == current->cred);
 	BUG_ON(cred == current->real_cred);
 
+	kmem_cache_free_hint(cred_jar, cred);
 	call_rcu(&cred->rcu, put_cred_rcu);
 }
 EXPORT_SYMBOL(__put_cred);
