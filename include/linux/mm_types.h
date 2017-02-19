@@ -189,6 +189,9 @@ struct page {
 	struct mem_cgroup *mem_cgroup;
 #endif
 
+	/* This holds info on number of objects deferred for freeing */
+	atomic_long_t deferred;
+
 	/*
 	 * On machines where all RAM is mapped into kernel address space,
 	 * we can simply calculate the virtual address. On machines with

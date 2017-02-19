@@ -39,6 +39,9 @@
 
 #include "internal.h"
 
+#define incr_def_count(s, page) update_def_count(s, page, 1);
+#define decr_def_count(s, page) update_def_count(s, page, 0);
+
 /*
  * Lock order:
  *   1. slab_mutex (Global Mutex)
@@ -1472,6 +1475,7 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 
 	page->freelist = start;
 	page->inuse = page->objects;
+	atomic_long_set(&page->deferred, 0);
 	page->frozen = 1;
 
 out:
@@ -2323,6 +2327,15 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 		"get_freelist"));
 
 	return freelist;
+}
+
+static void __always_inline update_def_count(struct kmem_cache *s,
+				struct page *page, bool incr)
+{
+	if (incr)
+		atomic_long_inc(&page->deferred);
+	else
+		atomic_long_dec(&page->deferred);
 }
 
 /*
