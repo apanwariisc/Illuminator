@@ -1716,7 +1716,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 {
 	struct page *page, *page2, *best = NULL;
 	void *object = NULL;
-	int objects, best_inuse, count = 10;
+	int objects, best_free = 0, count = 10;
 
 	/*
 	 * Racy check. If we mistakenly see no partial slabs then we
@@ -1729,16 +1729,18 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 
 	spin_lock(&n->list_lock);
 	list_for_each_entry_safe(page, page2, &n->partial, lru) {
+		int free_objs;
 
 		if (!pfmemalloc_match(page, flags))
 			continue;
 
-		if (unlikely(!(page->objects - page->inuse)))
+		free_objs = page->objects - page->inuse;
+		if (unlikely(!free_objs))
 			continue;
 
-		if (page->inuse > best_inuse) {
+		if (free_objs > best_free) {
 			best = page;
-			best_inuse = page->inuse;
+			best_free = free_objs;
 		}
 
 		if (!count)
@@ -2682,7 +2684,6 @@ static void pre_move_page(struct kmem_cache *s, struct page *page,
 {
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
 	struct gp_cache_data *cache_next, *cache_wait;
-	unsigned long uninitialized_var(flags);
 
 	/*
 	 * Need to move a slab from full list to node partial list whenever an
@@ -2698,11 +2699,11 @@ static void pre_move_page(struct kmem_cache *s, struct page *page,
 	if (unlikely(n->nr_partial >= s->min_partial &&
 			(count + cache_wait->def_count) == page->inuse)) {
 
-		spin_lock_irqsave(&n->list_lock, flags);
+		spin_lock(&n->list_lock);
 
 		/* process_idle function could already have discarded this slab */
 		if (atomic_long_read(&page->is_partial) == 2) {
-			spin_unlock_irqrestore(&n->list_lock, flags);
+			spin_unlock(&n->list_lock);
 			return;
 		}
 
@@ -2711,7 +2712,7 @@ static void pre_move_page(struct kmem_cache *s, struct page *page,
 		remove_partial(n, page);
 		atomic_long_set(&page->is_partial, 2);
 		discard_slab(s, page);
-		spin_unlock_irqrestore(&n->list_lock, flags);
+		spin_unlock(&n->list_lock);
 
 		stat(s, FREE_REMOVE_PARTIAL);
 		stat(s, FREE_SLAB);
@@ -2724,10 +2725,10 @@ static void pre_move_page(struct kmem_cache *s, struct page *page,
 	 * and try to add partial list holding a lock.
 	 */
 	if (atomic_long_read(&page->is_partial) == 0) {
-		spin_lock_irqsave(&n->list_lock, flags);
+		spin_lock(&n->list_lock);
 		add_partial(n, page, DEACTIVATE_TO_TAIL);
 		stat(s, FREE_ADD_PARTIAL);
-		spin_unlock_irqrestore(&n->list_lock, flags);
+		spin_unlock(&n->list_lock);
 	}
 	return;
 }
@@ -2736,7 +2737,6 @@ static void pre_move_page_frozen(struct kmem_cache *s, struct page *page)
 {
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
 	struct gp_cache_data *cache_next, *cache_wait;
-	unsigned long uninitialized_var(flags);
 
 	cache_next = &page->gp_cache[C_NEXT];
 	cache_wait = &page->gp_cache[C_WAIT];
@@ -2754,9 +2754,9 @@ static void pre_move_page_frozen(struct kmem_cache *s, struct page *page)
 	}
 
 	if (cache_next->freelist || cache_wait->freelist) {
-		spin_lock_irqsave(&n->list_lock, flags);
+		spin_lock(&n->list_lock);
 		add_partial(n, page, DEACTIVATE_TO_TAIL);
-		spin_unlock_irqrestore(&n->list_lock, flags);
+		spin_unlock(&n->list_lock);
 		stat(s, FREE_ADD_PARTIAL);
 	}
 }
@@ -2851,9 +2851,15 @@ static int handle_page_lists(struct kmem_cache *s, struct page *page)
 	return cache_wait->def_count + cache_next->def_count;
 }
 
-void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
+static inline void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
+#if 0
+	c->gp_seq = cur_gp;
+	c->alloc_rate = c->alloc_count;
+	c->alloc_count = 0;
+#endif
+
 	unsigned short i = cur_gp % 3;
 
 	/*
@@ -2944,18 +2950,26 @@ static short process_idle(struct kmem_cache *s)
 	 *
 	 * aggressive reclaim level: 0 = low, 1 = moderate, 2 = high
 	 */
+#if 0
 	if (c->alloc_rate <= 3) {
 		obj_limit = 0;
 	} else if (c->alloc_rate < oo_objects(s->oo)) {
 		if (c->total_objs < c->alloc_rate) {
 			/* Reclaim not required */
-			c->need_work = false;
 			goto page_process;
 		} else {
 			obj_limit = c->alloc_rate;
 		}
 	} else {
 		obj_limit = c->alloc_rate;
+	}
+#endif
+
+	if (c->alloc_rate <= 4 && c->alloc_count <= 4) {
+		obj_limit = 0;
+	} else {
+		obj_limit = c->alloc_rate > c->alloc_count ? c->alloc_rate :
+		c->alloc_count;
 	}
 
 	/* Do Cache reaping */
@@ -2988,7 +3002,7 @@ static short process_idle(struct kmem_cache *s)
 			break;
 	}
 
-	trace_idle_work(c->gp_seq, smp_processor_id(), c->alloc_rate, limit, c->total_objs,
+	trace_idle_work(c->gp_seq, smp_processor_id(), c->alloc_rate, 0, c->total_objs,
 			s->name);
 
 	if (need_resched())
@@ -3021,12 +3035,15 @@ page_process:
 			handle_page_lists(s, page);
 			if (!(page->objects - page->inuse))
 				list_move_tail(&page->lru, &n->partial);
+			else if ((page->objects - page->inuse) > (oo_objects(s->oo) / 2))
+				list_move(&page->lru, &n->partial);
 		}
 
-		if (need_resched() || !node_count--) {
+		if (need_resched() || !node_count) {
 			spin_unlock(&n->list_lock);
 			return 1;
 		}
+		node_count--;
 	}
 	spin_unlock(&n->list_lock);
 
@@ -3678,8 +3695,7 @@ static void inline pre_reap_page(struct kmem_cache *s,
 }
 
 static void slab_free_deferred(struct kmem_cache *s,
-		struct page *page, void *x, unsigned long addr,
-		struct rcu_head *head)
+		struct page *page, void *x, unsigned long addr)
 {
 	if (page_to_nid(page) != numa_node_id()) {
 #if 0
@@ -3741,15 +3757,13 @@ struct detached_freelist {
 };
 
 void kmem_cache_free_deferred(struct kmem_cache *s, void *x,
-		struct rcu_head *head)
+		__always_unused struct rcu_head *head)
 {
-	WARN_ON(!head);
-
 	s = cache_from_obj(s, x);
-	if (!s || !head)
+	if (!s)
 		return;
 
-	slab_free_deferred(s, virt_to_head_page(x), x, _RET_IP_, head);
+	slab_free_deferred(s, virt_to_head_page(x), x, _RET_IP_);
 	trace_kmem_cache_free(_RET_IP_, x);
 }
 EXPORT_SYMBOL(kmem_cache_free_deferred);
@@ -4656,7 +4670,7 @@ EXPORT_SYMBOL(kfree);
 
 #define SHRINK_PROMOTE_MAX 32
 
-void kfree_deferred(const void *x, struct rcu_head *head)
+void kfree_deferred(const void *x, __always_unused struct rcu_head *head)
 {
 	struct page *page;
 	void *object = (void *)x;
@@ -4671,7 +4685,7 @@ void kfree_deferred(const void *x, struct rcu_head *head)
 		__free_kmem_pages(page, compound_order(page));
 		return;
 	}
-	slab_free_deferred(page->slab_cache, page, object, _RET_IP_, head);
+	slab_free_deferred(page->slab_cache, page, object, _RET_IP_);
 }
 EXPORT_SYMBOL(kfree_deferred);
 
