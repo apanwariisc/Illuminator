@@ -2448,7 +2448,7 @@ static inline void flip_next_wait_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
-		stat_count(s, FREE_FASTPATH, cache_wait->def_count);
+		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 	}
 
 	if (cache_next->freelist) {
@@ -2482,7 +2482,7 @@ static inline void merge_to_current(struct kmem_cache *s,
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
 
-		stat_count(s, FREE_FASTPATH, cache_wait->def_count);
+		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 
 		/* Reset wait list */
 		cache_wait->freelist = NULL;
@@ -2503,7 +2503,7 @@ static inline void merge_to_current(struct kmem_cache *s,
 		c->freelist = cache_next->freelist;
 		c->total_objs += cache_next->def_count;
 
-		stat_count(s, FREE_FASTPATH, cache_next->def_count);
+		stat_count(s, FREE_FASTPATH, (unsigned) cache_next->def_count);
 
 		/* Reset next list */
 		cache_next->freelist = NULL;
@@ -2517,12 +2517,12 @@ static inline void merge_to_current(struct kmem_cache *s,
 
 /* Caller is responsible for acquiring slab_lock(page) */
 static void inline merge_page_list(struct kmem_cache *s, struct page *page,
-		struct gp_cache_data *cache)
+		struct gp_cache_data *cache, bool merge_next)
 {
 	struct page new;
 	void *prior;
-	unsigned long counters;
-	void **object;
+	unsigned long counters, count;
+	void **object, **c_freelist;
 	int was_frozen;
 
 	/* Move wait list to freelist */
@@ -2530,6 +2530,25 @@ static void inline merge_page_list(struct kmem_cache *s, struct page *page,
 		return;
 
 	object = cache->last;
+	if (merge_next) {
+		do {
+			c_freelist = cache->freelist;
+			count = cache->def_count;
+		} while (!cmpxchg_double(&cache->freelist, &cache->def_count,
+					c_freelist, count,
+					NULL, 0));
+		cache->gp_seq = 0;
+		cache->last = NULL;
+	} else {
+		c_freelist = cache->freelist;
+		count = cache->def_count;
+
+		/* Reset wait list */
+		cache->freelist = NULL;
+		cache->def_count = 0;
+		cache->gp_seq = 0;
+		cache->last = NULL;
+	}
 
 	/* To take care of parallel frees */
 	do {
@@ -2541,17 +2560,11 @@ static void inline merge_page_list(struct kmem_cache *s, struct page *page,
 		was_frozen = new.frozen;
 
 		VM_BUG_ON(new.inuse < cache->def_count);
-		new.inuse -= cache->def_count;
+		new.inuse -= count;
 	} while (!__cmpxchg_double_slab(s, page,
 				prior, counters,
-				cache->freelist, new.counters,
+				c_freelist, new.counters,
 				"def merge freelist"));
-
-	/* Reset wait list */
-	cache->freelist = NULL;
-	cache->gp_seq = 0;
-	cache->def_count = 0;
-	cache->last = NULL;
 
 	VM_BUG_ON(cache->gp_seq || cache->def_count);
 
@@ -2590,6 +2603,8 @@ static void pre_move_page(struct kmem_cache *s, struct page *page)
 			(cache_next->def_count + cache_wait->def_count) == page->inuse)) {
 
 		spin_lock_irqsave(&n->list_lock, flags);
+		stat_count(s, FREE_SLOWPATH,
+				(unsigned)(cache_wait->def_count + cache_next->def_count));
 		remove_partial(n, page);
 		stat(s, FREE_REMOVE_PARTIAL);
 		spin_unlock_irqrestore(&n->list_lock, flags);
@@ -2626,6 +2641,8 @@ static void pre_move_page_frozen(struct kmem_cache *s, struct page *page)
 			(!page->inuse ||
 			(cache_next->def_count + cache_wait->def_count) == page->inuse))) {
 
+		stat_count(s, FREE_SLOWPATH,
+				(unsigned)(cache_wait->def_count + cache_next->def_count));
 		stat(s, FREE_SLAB);
 		discard_slab(s, page);
 
@@ -2673,6 +2690,10 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 	cache_next = &page->gp_cache[C_NEXT];
 	cache_wait = &page->gp_cache[C_WAIT];
 
+	if (!cache_next->gp_seq && !cache_wait->gp_seq)
+		return;
+
+	slab_lock(page);
 	if (cache_next->gp_seq && cache_next->gp_seq <= completed_gp) {
 		/*
 		 * Merge to page freelist
@@ -2681,48 +2702,54 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 		 * XXX Will cause on deadlock on archs not
 		 * supporting cmpxchg_double
 		 */
-		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+		stat_count(s, FREE_SLOWPATH, (unsigned) cache_wait->def_count);
+		stat_count(s, FREE_SLOWPATH, (unsigned) cache_next->def_count);
 
-		slab_lock(page);
-		merge_page_list(s, page, cache_wait);
-		merge_page_list(s, page, cache_next);
-		slab_unlock(page);
+		merge_page_list(s, page, cache_wait, false);
+		merge_page_list(s, page, cache_next, true);
 	} else if (cache_next->gp_seq == get_state_rcu_gpnum()) {
 		/*
 		 * A grace period has passed. Flip wait to page freelist and
 		 * next to wait.
 		 */
-		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+		stat_count(s, FREE_SLOWPATH, (unsigned) cache_wait->def_count);
+		merge_page_list(s, page, cache_wait, false);
 
-		slab_lock(page);
-		merge_page_list(s, page, cache_wait);
 		if (cache_next->freelist) {
 			/* Move next list to wait */
-			cache_wait->freelist = cache_next->freelist;
+			void **prior;
+			unsigned long count;
+
 			cache_wait->last = cache_next->last;
 			cache_wait->gp_seq = cache_next->gp_seq;
-			cache_wait->def_count = cache_next->def_count;
+
+			do {
+				prior = cache_next->freelist;
+				count = cache_next->def_count;
+			} while (!cmpxchg_double(&cache_next->freelist, &cache_next->def_count,
+						prior, count,
+						NULL, 0));
+
+			cache_wait->freelist = prior;
+			cache_wait->def_count = count;
 
 			/* Reset next list */
-			cache_next->freelist = NULL;
 			cache_next->gp_seq = 0;
-			cache_next->def_count = 0;
 			cache_next->last = NULL;
 		}
-		slab_unlock(page);
 	} else if (cache_wait->gp_seq && cache_wait->gp_seq <= completed_gp) {
 		/* Elements in wait list are safe */
-		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+		stat_count(s, FREE_SLOWPATH, (unsigned) cache_wait->def_count);
 
-		slab_lock(page);
-		merge_page_list(s, page, cache_wait);
-		slab_unlock(page);
+		merge_page_list(s, page, cache_wait, false);
 	}
+	slab_unlock(page);
 }
 
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
+	c->gp_seq = cur_gp;
 	return;
 #if 0
 	unsigned short i = cur_gp % 3;
@@ -3357,6 +3384,42 @@ redo:
 	/* c->free_count++; */
 }
 
+static void inline pre_reap_page(struct kmem_cache *s,
+            struct page *page, void *x)
+{
+	unsigned long cur_gp = get_state_rcu_gpnum();
+	struct gp_cache_data *cache_next;
+	void **object = (void *)x;
+	void *prior;
+	unsigned long count, new_count;
+
+	cache_next = &page->gp_cache[C_NEXT];
+
+	if (cur_gp != cache_next->gp_seq)
+		handle_page_lists(s, page);
+
+	do {
+		prior = cache_next->freelist;
+		count = new_count = cache_next->def_count;
+		new_count++;
+
+		set_freepointer(s, object, prior);
+
+	} while(!cmpxchg_double(&cache_next->freelist, &cache_next->def_count,
+				prior, count,
+				object, new_count));
+
+	if (count == 0) {
+		slab_lock(page);
+		VM_BUG_ON(cache_next->freelist);
+		cache_next->gp_seq = cur_gp + 1;
+		cache_next->last = object;
+		slab_unlock(page);
+	}
+
+	pre_move_page(s, page);
+}
+
 static void slab_free_deferred(struct kmem_cache *s,
 		struct page *page, void *x, unsigned long addr,
 		struct rcu_head *head)
@@ -3384,27 +3447,27 @@ static void slab_free_deferred(struct kmem_cache *s,
 			c->total_objs > oo_objects(s->oo) ||
 			page_to_nid(page) != numa_node_id()) {
 		pre_reap = true;
-		cache_next = &page->gp_cache[C_NEXT];
-		slab_lock(page);
 	}
-
-	if (unlikely(!cache_next->gp_seq)) {
-		VM_BUG_ON(cache_next->freelist);
-		cache_next->gp_seq = cur_gp + 1;
-		cache_next->last = object;
-	}
-
-	set_freepointer(s, object, cache_next->freelist);
-	cache_next->freelist = object;
-	cache_next->def_count++;
 
 	if (pre_reap) {
-		slab_unlock(page);
-		/* Check if we can discard a page else move to node partial list */
-		pre_move_page(s, page);
+		pre_reap_page(s, page, x);
+	} else {
+		/* FIXME: If an interrupt occurs at this place and performs a
+		 * a slab_free_def on the same slab, then there is a possibility
+		 * of corruption
+		 */
+		set_freepointer(s, object, cache_next->freelist);
+		cache_next->freelist = object;
+		cache_next->def_count++;
+
+		if (unlikely(!cache_next->gp_seq)) {
+			VM_BUG_ON(cache_next->freelist);
+			cache_next->gp_seq = cur_gp + 1;
+			cache_next->last = object;
+		}
+
 	}
 
-out:
 	stat(s, DEFERRED_FREE);
 
 	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
