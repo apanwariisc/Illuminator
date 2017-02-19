@@ -1306,7 +1306,7 @@ static int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	user_watches = atomic_long_read(&ep->user->epoll_watches);
 	if (unlikely(user_watches >= max_user_watches))
 		return -ENOSPC;
-	if (!(epi = kmem_cache_alloc(epi_cache, GFP_KERNEL)))
+	if (!(epi = kmem_cache_alloc_def(epi_cache, GFP_KERNEL)))
 		return -ENOMEM;
 
 	/* Item initialization follow here ... */

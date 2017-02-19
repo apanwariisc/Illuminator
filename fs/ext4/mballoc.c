@@ -3589,7 +3589,7 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 	BUG_ON(ac->ac_status != AC_STATUS_FOUND);
 	BUG_ON(!S_ISREG(ac->ac_inode->i_mode));
 
-	pa = kmem_cache_alloc(ext4_pspace_cachep, GFP_NOFS);
+	pa = kmem_cache_alloc_def(ext4_pspace_cachep, GFP_NOFS);
 	if (pa == NULL)
 		return -ENOMEM;
 
@@ -3683,7 +3683,7 @@ ext4_mb_new_group_pa(struct ext4_allocation_context *ac)
 	BUG_ON(!S_ISREG(ac->ac_inode->i_mode));
 
 	BUG_ON(ext4_pspace_cachep == NULL);
-	pa = kmem_cache_alloc(ext4_pspace_cachep, GFP_NOFS);
+	pa = kmem_cache_alloc_def(ext4_pspace_cachep, GFP_NOFS);
 	if (pa == NULL)
 		return -ENOMEM;
 

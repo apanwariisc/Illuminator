@@ -692,7 +692,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 	struct request_queue *q;
 	int err;
 
-	q = kmem_cache_alloc_node(blk_requestq_cachep,
+	q = kmem_cache_alloc_node_def(blk_requestq_cachep,
 				gfp_mask | __GFP_ZERO, node_id);
 	if (!q)
 		return NULL;

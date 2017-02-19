@@ -50,7 +50,7 @@ kmem_alloc(size_t size, xfs_km_flags_t flags)
 	void	*ptr;
 
 	do {
-		ptr = kmalloc(size, lflags);
+		ptr = kmalloc_def(size, lflags);
 		if (ptr || (flags & (KM_MAYFAIL|KM_NOSLEEP)))
 			return ptr;
 		if (!(++retries % 100))
@@ -116,7 +116,7 @@ kmem_zone_alloc(kmem_zone_t *zone, xfs_km_flags_t flags)
 	void	*ptr;
 
 	do {
-		ptr = kmem_cache_alloc(zone, lflags);
+		ptr = kmem_cache_alloc_def(zone, lflags);
 		if (ptr || (flags & (KM_MAYFAIL|KM_NOSLEEP)))
 			return ptr;
 		if (!(++retries % 100))

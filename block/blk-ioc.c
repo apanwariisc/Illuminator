@@ -364,7 +364,7 @@ struct io_cq *ioc_create_icq(struct io_context *ioc, struct request_queue *q,
 	struct io_cq *icq;
 
 	/* allocate stuff */
-	icq = kmem_cache_alloc_node(et->icq_cache, gfp_mask | __GFP_ZERO,
+	icq = kmem_cache_alloc_node_def(et->icq_cache, gfp_mask | __GFP_ZERO,
 				    q->node);
 	if (!icq)
 		return NULL;
