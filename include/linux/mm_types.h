@@ -167,6 +167,9 @@ struct page {
 #endif
 	};
 
+	/* Need to be double word aligned due to use of cmpxchg_double */
+	struct gp_cache_data gp_cache[2];
+
 	/* Remainder is not double word aligned */
 	union {
 		unsigned long private;		/* Mapping-private opaque data:
@@ -194,7 +197,6 @@ struct page {
 	/* This holds info on number of objects deferred for freeing */
 	atomic_long_t deferred;
 	atomic_long_t is_partial;
-	struct gp_cache_data gp_cache[2];
 
 	/*
 	 * On machines where all RAM is mapped into kernel address space,
