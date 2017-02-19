@@ -158,7 +158,7 @@ static void sctp_transport_destroy_rcu(struct rcu_head *head)
 	transport = container_of(head, struct sctp_transport, rcu);
 
 	dst_release(transport->dst);
-	kfree(transport);
+	kfree_unhint(transport);
 	SCTP_DBG_OBJCNT_DEC(transport);
 }
 
@@ -177,6 +177,7 @@ static void sctp_transport_destroy(struct sctp_transport *transport)
 	if (transport->asoc)
 		sctp_association_put(transport->asoc);
 
+	kfree_hint(transport);
 	call_rcu(&transport->rcu, sctp_transport_destroy_rcu);
 }
 

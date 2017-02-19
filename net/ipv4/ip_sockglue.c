@@ -311,7 +311,7 @@ static void ip_ra_destroy_rcu(struct rcu_head *head)
 	struct ip_ra_chain *ra = container_of(head, struct ip_ra_chain, rcu);
 
 	sock_put(ra->saved_sk);
-	kfree(ra);
+	kfree_unhint(ra);
 }
 
 int ip_ra_control(struct sock *sk, unsigned char on,
@@ -349,6 +349,7 @@ int ip_ra_control(struct sock *sk, unsigned char on,
 			 * to mess with socket refcounts.
 			 */
 			ra->saved_sk = sk;
+			kfree_hint(ra);
 			call_rcu(&ra->rcu, ip_ra_destroy_rcu);
 			return 0;
 		}

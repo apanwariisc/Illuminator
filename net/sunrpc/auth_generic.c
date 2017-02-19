@@ -117,7 +117,7 @@ generic_free_cred(struct rpc_cred *cred)
 	dprintk("RPC:       generic_free_cred %p\n", gcred);
 	if (gcred->acred.group_info != NULL)
 		put_group_info(gcred->acred.group_info);
-	kfree(gcred);
+	kfree_unhint(gcred);
 }
 
 static void
@@ -130,6 +130,7 @@ generic_free_cred_callback(struct rcu_head *head)
 static void
 generic_destroy_cred(struct rpc_cred *cred)
 {
+	kfree_hint(cred);
 	call_rcu(&cred->cr_rcu, generic_free_cred_callback);
 }
 

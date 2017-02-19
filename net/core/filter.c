@@ -887,7 +887,7 @@ static void __bpf_prog_release(struct bpf_prog *prog)
 static void __sk_filter_release(struct sk_filter *fp)
 {
 	__bpf_prog_release(fp->prog);
-	kfree(fp);
+	kfree_unhint(fp);
 }
 
 /**
@@ -909,8 +909,10 @@ static void sk_filter_release_rcu(struct rcu_head *rcu)
  */
 static void sk_filter_release(struct sk_filter *fp)
 {
-	if (atomic_dec_and_test(&fp->refcnt))
+	if (atomic_dec_and_test(&fp->refcnt)) {
+		kfree_hint(fp);
 		call_rcu(&fp->rcu, sk_filter_release_rcu);
+	}
 }
 
 void sk_filter_uncharge(struct sock *sk, struct sk_filter *fp)

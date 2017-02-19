@@ -3138,7 +3138,10 @@ static void shmem_destroy_inode(struct inode *inode)
 {
 	if (S_ISREG(inode->i_mode))
 		mpol_free_shared_policy(&SHMEM_I(inode)->policy);
+	kmem_cache_free_deferred(shmem_inode_cachep, SHMEM_I(inode), &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, shmem_destroy_callback);
+#endif
 }
 
 static void shmem_init_inode(void *foo)

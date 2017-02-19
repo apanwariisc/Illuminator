@@ -630,7 +630,10 @@ static void ipmr_cache_free_rcu(struct rcu_head *head)
 
 static inline void ipmr_cache_free(struct mfc_cache *c)
 {
+	kmem_cache_free_deferred(mrt_cachep, c, &c->rcu);
+#if 0
 	call_rcu(&c->rcu, ipmr_cache_free_rcu);
+#endif
 }
 
 /* Destroy an unresolved cache entry, killing queued skbs

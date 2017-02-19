@@ -353,7 +353,7 @@ static void neigh_hash_free_rcu(struct rcu_head *head)
 		kfree(buckets);
 	else
 		free_pages((unsigned long)buckets, get_order(size));
-	kfree(nht);
+	kfree_unhint(nht);
 }
 
 static struct neigh_hash_table *neigh_hash_grow(struct neigh_table *tbl,
@@ -393,6 +393,7 @@ static struct neigh_hash_table *neigh_hash_grow(struct neigh_table *tbl,
 	}
 
 	rcu_assign_pointer(tbl->nht, new_nht);
+	kfree_hint(old_nht);
 	call_rcu(&old_nht->rcu, neigh_hash_free_rcu);
 	return new_nht;
 }
@@ -1556,6 +1557,7 @@ int neigh_table_clear(int index, struct neigh_table *tbl)
 	if (atomic_read(&tbl->entries))
 		pr_crit("neighbour leakage\n");
 
+	kfree_hint(tbl->nht);
 	call_rcu(&rcu_dereference_protected(tbl->nht, 1)->rcu,
 		 neigh_hash_free_rcu);
 	tbl->nht = NULL;

@@ -275,7 +275,10 @@ static void __alias_free_mem(struct rcu_head *head)
 
 static inline void alias_free_mem_rcu(struct fib_alias *fa)
 {
+	kmem_cache_free_deferred(fn_alias_kmem, fa, &fa->rcu);
+#if 0
 	call_rcu(&fa->rcu, __alias_free_mem);
+#endif
 }
 
 #define TNODE_KMALLOC_MAX \

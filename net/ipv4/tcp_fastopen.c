@@ -33,7 +33,7 @@ static void tcp_fastopen_ctx_free(struct rcu_head *head)
 	struct tcp_fastopen_context *ctx =
 	    container_of(head, struct tcp_fastopen_context, rcu);
 	crypto_free_cipher(ctx->tfm);
-	kfree(ctx);
+	kfree_unhint(ctx);
 }
 
 int tcp_fastopen_reset_cipher(void *key, unsigned int len)
@@ -67,8 +67,10 @@ error:		kfree(ctx);
 	rcu_assign_pointer(tcp_fastopen_ctx, ctx);
 	spin_unlock(&tcp_fastopen_ctx_lock);
 
-	if (octx)
+	if (octx) {
+		kfree_hint(octx);
 		call_rcu(&octx->rcu, tcp_fastopen_ctx_free);
+	}
 	return err;
 }
 

@@ -44,7 +44,7 @@ static void release_callchain_buffers_rcu(struct rcu_head *head)
 	for_each_possible_cpu(cpu)
 		kfree(entries->cpu_entries[cpu]);
 
-	kfree(entries);
+	kfree_unhint(entries);
 }
 
 static void release_callchain_buffers(void)
