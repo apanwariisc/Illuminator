@@ -49,7 +49,7 @@ static void slab_free(struct kmem_cache *s, struct page *page,
 static void __slab_free(struct kmem_cache *s, struct page *page,
 		void *head, void *tail, int cnt,
 		unsigned long addr);
-static void handle_page_lists(struct kmem_cache *s, struct page *page);
+static int handle_page_lists(struct kmem_cache *s, struct page *page);
 static void *slab_alloc_node_def(struct kmem_cache *s,
 		        gfp_t gfpflags, int node, unsigned long addr);
 static int slub_idle_work(struct notifier_block *nb, unsigned long val,
@@ -1713,7 +1713,7 @@ static inline bool pfmemalloc_match(struct page *page, gfp_t gfpflags);
 static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 				struct kmem_cache_cpu *c, gfp_t flags)
 {
-	struct page *page, *page2, *best = NULL:
+	struct page *page, *page2, *best = NULL;
 	void *object = NULL;
 	int objects, count = 10;
 	int best_future = 0, best_avl = 0;
@@ -2803,7 +2803,7 @@ static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
 }
 
 /* TODO: Merge with above function */
-static unsigned int handle_page_lists(struct kmem_cache *s, struct page *page)
+static int handle_page_lists(struct kmem_cache *s, struct page *page)
 {
 	struct gp_cache_data *cache_next, *cache_wait;
 	unsigned long completed_gp = get_state_rcu_gpcompleted();
@@ -2812,7 +2812,7 @@ static unsigned int handle_page_lists(struct kmem_cache *s, struct page *page)
 	cache_wait = &page->gp_cache[C_WAIT];
 
 	if (!cache_next->gp_seq && !cache_wait->gp_seq)
-		return 0;
+		return atomic_long_read(&page->deferred);
 
 	slab_lock(page);
 	if (cache_next->gp_seq && cache_next->gp_seq <= completed_gp) {
@@ -2865,7 +2865,8 @@ static unsigned int handle_page_lists(struct kmem_cache *s, struct page *page)
 		merge_page_list(s, page, cache_wait, false);
 	}
 	slab_unlock(page);
-	return cache_wait->def_count + cache_next->def_count;
+	return cache_wait->def_count + cache_next->def_count +
+		atomic_long_read(&page->deferred);
 }
 
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
@@ -2938,9 +2939,8 @@ static short process_idle(struct kmem_cache *s)
 	void *object, *prev = NULL, *nextfree;
 	struct kmem_cache_cpu *c;
 	unsigned long cur_gp = get_state_rcu_gpnum();
-	int limit = 10;
+	int limit = 20;
 	int obj_limit = oo_objects(s->oo);
-	short aggressive_reclaim = 0;
 
 	c = this_cpu_ptr(s->cpu_slab);
 
@@ -2968,7 +2968,6 @@ static short process_idle(struct kmem_cache *s)
 	 * aggressive reclaim level: 0 = low, 1 = moderate, 2 = high
 	 */
 	if (c->alloc_rate <= 3) {
-		aggressive_reclaim = 2;
 		obj_limit = 0;
 	} else if (c->alloc_rate < oo_objects(s->oo)) {
 		if (c->total_objs < c->alloc_rate) {
@@ -2977,7 +2976,6 @@ static short process_idle(struct kmem_cache *s)
 			return 2;
 		} else {
 			obj_limit = c->alloc_rate + limit;
-			aggressive_reclaim = 1;
 		}
 	} else {
 		obj_limit = c->alloc_rate * 2;
@@ -2991,7 +2989,8 @@ static short process_idle(struct kmem_cache *s)
 		prefetch_freepointer(s, nextfree);
 		page = virt_to_head_page(object);
 
-		if ((aggressive_reclaim == 0 &&
+#if 0
+		if (aggressive_reclaim != 2 &&
 				(c->page == page ||	!atomic_long_read(&page->is_partial))) ||
 				(aggressive_reclaim == 1 && c->page == page)) {
 			prev = object;
@@ -3002,6 +3001,7 @@ static short process_idle(struct kmem_cache *s)
 
 			continue;
 		}
+#endif
 
 		stat(s, ALLOC_FAST_PATH_RCU);
 
@@ -3683,15 +3683,16 @@ static void slab_free_deferred(struct kmem_cache *s,
 		struct page *page, void *x, unsigned long addr,
 		struct rcu_head *head)
 {
-	struct kmem_cache_cpu *c;
-	void **object = (void *)x;
-	struct gp_cache_data *cache_next;
-	unsigned long cur_gp = get_state_rcu_gpnum();
+	struct kmem_cache_cpu *c = this_cpu_ptr(s->cpu_slab);
 
 	if (page_to_nid(page) != numa_node_id()) {
+#if 0
+		||
+			(c->total_objs > (oo_objects(s->oo) * 2) &&
+			 c->alloc_rate < (oo_objects(s->oo) / 2))) {
+#endif
 		pre_reap_page(s, page, x);
 	} else {
-		struct kmem_cache_cpu *c;
 		void **object = (void *)x;
 		struct gp_cache_data *cache_next;
 		unsigned long cur_gp = get_state_rcu_gpnum();
@@ -3700,7 +3701,6 @@ static void slab_free_deferred(struct kmem_cache *s,
 		 * a slab_free_def on the same slab, then there is a possibility
 		 * of corruption
 		 */
-		c = this_cpu_ptr(s->cpu_slab);
 		cache_next = &c->gp_cache[C_NEXT];
 
 		if (unlikely(cur_gp != c->gp_seq)) {
