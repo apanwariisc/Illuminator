@@ -2493,6 +2493,46 @@ static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	}
 }
 
+void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
+		unsigned long cur_gp)
+{
+	unsigned short i = cur_gp % 3;
+	int nr_objs = oo_objects(s->oo);
+
+	/*
+	 * Grace period has expired. Calculate averages
+	 * It is possible to have no allocations requested
+	 * in couple of previous grace period. In that case
+	 * we consider the request size to be of the minimum
+	 * cache size
+	 */
+	switch (cur_gp - c->gp_seq) {
+		case 1:
+			break;
+		case 2:
+			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
+			break;
+		case 3:
+			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
+			c->prev_alloc[i == 2 ? 0: (i + 1)] = nr_objs;
+			break;
+		default:
+			c->prev_alloc[0] = c->prev_alloc[1] = c->prev_alloc[2] = nr_objs;
+			break;
+	}
+	c->alloc_rate = (c->prev_alloc[0] + c->prev_alloc[1] +
+					c->prev_alloc[2] + c->alloc_count) / 4;
+
+	/* Don't let allocation rate to be set too low */
+	if (c->alloc_rate < nr_objs)
+		c->alloc_rate = nr_objs;
+
+	c->prev_alloc[i] = c->alloc_count;
+	c->alloc_count = 0;
+	c->free_count = 0;
+	c->gp_seq = cur_gp;
+}
+
 /*
  * Slow path. The lockless freelist is empty or we need to perform
  * debugging duties.
@@ -2733,6 +2773,7 @@ static __always_inline void *slab_alloc_node_def(struct kmem_cache *s,
 	void **object;
 	struct kmem_cache_cpu *c;
 	unsigned long tid;
+	unsigned long cur_gp = get_state_rcu_gpnum();
 
 	if (slab_pre_alloc_hook(s, gfpflags))
 		return NULL;
@@ -2745,10 +2786,16 @@ redo:
 	tid = c->tid;
 	preempt_enable();
 
+	if (unlikely(cur_gp != c->gp_seq)) {
+		calculate_avg(s, c, cur_gp);
+		/* Handle list move operations depending on the grace period */
+		handle_lists(s, c, cur_gp);
+	}
+
 	object = c->freelist;
 	if (unlikely(!object)) {
-		/* Fliping and merging can be considered */
 		VM_BUG_ON(c->total_objs);
+		/* Fliping and merging can be considered based on alloc rate*/
 		object = __slab_alloc(s, gfpflags, node, addr, c);
 		stat(s, ALLOC_SLOWPATH);
 	} else {
@@ -3057,9 +3104,11 @@ static void slab_free_deferred(struct kmem_cache *s,
 	c = __this_cpu_ptr(s->cpu_slab);
 	cache_next = &c->gp_cache[C_NEXT];
 
-	/* Handle list move operations depending on the grace
-	   period */
-	handle_lists(s, c, cur_gp);
+	if (cur_gp != c->gp_seq) {
+		calculate_avg(s, c, cur_gp);
+		/* Handle list move operations depending on the grace period */
+		handle_lists(s, c, cur_gp);
+	}
 
 	if (unlikely(!cache_next->gp_seq)) {
 		VM_BUG_ON(cache_next->freelist);
