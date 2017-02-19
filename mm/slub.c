@@ -4707,6 +4707,39 @@ static ssize_t partial_show(struct kmem_cache *s, char *buf)
 }
 SLAB_ATTR_RO(partial);
 
+static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
+{
+	int empty_slabs = 0;
+	int cpu;
+	int node;
+	struct kmem_cache_node *n;
+
+	/* Partial list of all CPUs */
+	if (kmem_cache_has_cpu_partial(s)) {
+		for_each_online_cpu(cpu) {
+			struct page *page = per_cpu_ptr(s->cpu_slab, cpu)->partial;
+
+			while (page) {
+				if (!page->inuse)
+					empty_slabs++;
+				page = page->next;
+			}
+		}
+	}
+
+	/* Partial list of all nodes */
+	for_each_kmem_cache_node(s, node, n) {
+		struct page *page, *page2;
+		list_for_each_entry_safe(page, page2, &n->partial, lru) {
+			if (!page->inuse)
+				empty_slabs++;
+		}
+	}
+
+	return sprintf(buf, "%d", empty_slabs);
+}
+SLAB_ATTR_RO(empty_slab);
+
 static ssize_t cpu_slabs_show(struct kmem_cache *s, char *buf)
 {
 	return show_slab_objects(s, buf, SO_CPU);
@@ -5157,6 +5190,7 @@ static struct attribute *slab_attrs[] = {
 	&cpu_partial_free_attr.attr,
 	&cpu_partial_node_attr.attr,
 	&cpu_partial_drain_attr.attr,
+	&empty_slab_attr.attr,
 #endif
 #ifdef CONFIG_FAILSLAB
 	&failslab_attr.attr,
