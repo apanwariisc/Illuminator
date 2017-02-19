@@ -321,7 +321,10 @@ static void sysv_i_callback(struct rcu_head *head)
 
 static void sysv_destroy_inode(struct inode *inode)
 {
+	kmem_cache_free_deferred(sysv_inode_cachep, SYSV_I(inode), &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, sysv_i_callback);
+#endif
 }
 
 static void init_once(void *p)

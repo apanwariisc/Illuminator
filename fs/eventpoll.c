@@ -729,7 +729,11 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 	 * ep->mtx. The rcu read side, reverse_path_check_proc(), does not make
 	 * use of the rbn field.
 	 */
+
+	kmem_cache_free_deferred(epi_cache, epi, &epi->rcu);
+#if 0
 	call_rcu(&epi->rcu, epi_rcu_free);
+#endif
 
 	atomic_long_dec(&ep->user->epoll_watches);
 

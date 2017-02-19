@@ -78,7 +78,10 @@ static void ioc_destroy_icq(struct io_cq *icq)
 	 * making it impossible to determine icq_cache.  Record it in @icq.
 	 */
 	icq->__rcu_icq_cache = et->icq_cache;
+	kmem_cache_free_deferred(icq->__rcu_icq_cache, icq, &icq->__rcu_head);
+#if 0
 	call_rcu(&icq->__rcu_head, icq_free_icq_rcu);
+#endif
 }
 
 /*

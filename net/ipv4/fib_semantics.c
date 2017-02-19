@@ -216,7 +216,7 @@ static void free_fib_info_rcu(struct rcu_head *head)
 
 	if (fi->fib_metrics != (u32 *) dst_default_metrics)
 		kfree(fi->fib_metrics);
-	kfree(fi);
+	kfree_unhint(fi);
 }
 
 void free_fib_info(struct fib_info *fi)
@@ -232,6 +232,7 @@ void free_fib_info(struct fib_info *fi)
 			fi->fib_net->ipv4.fib_num_tclassid_users--;
 	} endfor_nexthops(fi);
 #endif
+	kfree_hint(fi);
 	call_rcu(&fi->rcu, free_fib_info_rcu);
 }
 

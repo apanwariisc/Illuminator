@@ -484,6 +484,9 @@ static void kill_rules(struct audit_tree *tree)
 			rule->tree = NULL;
 			list_del_rcu(&entry->list);
 			list_del(&entry->rule.list);
+			kfree_hint(entry);
+			kfree_hint(rule->fields);
+			kfree_hint(rule->filterkey);
 			call_rcu(&entry->rcu, audit_free_rule_rcu);
 		}
 	}

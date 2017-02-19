@@ -983,6 +983,7 @@ int audit_del_rule(struct audit_entry *entry)
 	struct audit_entry  *e;
 	struct audit_tree *tree = entry->rule.tree;
 	struct list_head *list;
+	struct audit_krule *erule;
 	int ret = 0;
 #ifdef CONFIG_AUDITSYSCALL
 	int dont_count = 0;
@@ -1019,6 +1020,11 @@ int audit_del_rule(struct audit_entry *entry)
 
 	list_del_rcu(&e->list);
 	list_del(&e->rule.list);
+
+	erule = &e->rule;
+	kfree_hint(erule->fields);
+	kfree_hint(erule->filterkey);
+	kfree_hint(e);
 	call_rcu(&e->rcu, audit_free_rule_rcu);
 
 out:
@@ -1426,6 +1432,9 @@ static int update_lsm_rule(struct audit_krule *r)
 		list_replace_rcu(&entry->list, &nentry->list);
 		list_replace(&r->list, &nentry->rule.list);
 	}
+	kfree_hint(entry);
+	kfree_hint(r->fields);
+	kfree_hint(r->filterkey);
 	call_rcu(&entry->rcu, audit_free_rule_rcu);
 
 	return err;

@@ -589,7 +589,10 @@ int fasync_remove_entry(struct file *filp, struct fasync_struct **fapp)
 		spin_unlock_irq(&fa->fa_lock);
 
 		*fp = fa->fa_next;
+		kmem_cache_free_deferred(fasync_cache, fa, &fa->fa_rcu);
+#if 0
 		call_rcu(&fa->fa_rcu, fasync_free_rcu);
+#endif
 		filp->f_flags &= ~FASYNC;
 		result = 1;
 		break;

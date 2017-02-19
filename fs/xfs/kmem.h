@@ -109,6 +109,12 @@ kmem_zone_free(kmem_zone_t *zone, void *ptr)
 }
 
 static inline void
+kmem_zone_free_deferred(kmem_zone_t *zone, void *ptr, struct rcu_head *head)
+{
+	    kmem_cache_free_deferred(zone, ptr, head);
+}
+
+static inline void
 kmem_zone_destroy(kmem_zone_t *zone)
 {
 	if (zone)

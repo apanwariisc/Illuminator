@@ -522,7 +522,10 @@ static void bdev_i_callback(struct rcu_head *head)
 
 static void bdev_destroy_inode(struct inode *inode)
 {
+	kmem_cache_free_deferred(bdev_cachep, BDEV_I(inode), &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, bdev_i_callback);
+#endif
 }
 
 static void init_once(void *foo)
