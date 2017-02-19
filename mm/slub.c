@@ -3654,41 +3654,7 @@ static void inline pre_reap_page(struct kmem_cache *s,
 static void slab_free_deferred(struct kmem_cache *s,
 		struct page *page, void *x, unsigned long addr)
 {
-	struct kmem_cache_cpu *c = this_cpu_ptr(s->cpu_slab);
-
-	if (page_to_nid(page) != numa_node_id() ||
-			page != c->page) {
 		pre_reap_page(s, page, x);
-	} else {
-		void **object = (void *)x;
-		struct gp_cache_data *cache_next;
-		unsigned long cur_gp = get_state_rcu_gpnum();
-
-		/* FIXME: If an interrupt occurs at this place and performs a
-		 * a slab_free_def on the same slab, then there is a possibility
-		 * of corruption
-		 */
-		cache_next = &c->gp_cache[C_NEXT];
-
-		if (unlikely(cur_gp != c->gp_seq)) {
-			calculate_avg(s, c, cur_gp);
-			/* Handle list move operations depending on the grace period */
-			handle_lists(s, c, cur_gp);
-		}
-
-		set_freepointer(s, object, cache_next->freelist);
-		cache_next->freelist = object;
-		cache_next->def_count++;
-
-		if (unlikely(!cache_next->gp_seq)) {
-			VM_BUG_ON(cache_next->freelist);
-			cache_next->gp_seq = cur_gp + 1;
-			cache_next->last = object;
-		}
-
-		trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
-				c->alloc_count, "free", s->name);
-	}
 
 	stat(s, DEFERRED_FREE);
 }
