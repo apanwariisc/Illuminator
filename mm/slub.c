@@ -2522,7 +2522,7 @@ void kfree_unhint(const void *x)
 		return;
 	}
 
-	slab_free(page->slab_cache, page, NULL, 1, object,_RET_IP_);
+	slab_free(page->slab_cache, page, object, NULL, 1, _RET_IP_);
 	return;
 }
 EXPORT_SYMBOL(kfree_unhint);
@@ -3231,7 +3231,7 @@ static void *__slab_alloc(struct kmem_cache *s, gfp_t gfpflags, int node,
 static __always_inline void *slab_alloc_node(struct kmem_cache *s,
 		gfp_t gfpflags, int node, unsigned long addr)
 {
-	void *object;
+	void *object, *next_object;
 	struct kmem_cache_cpu *c;
 	struct page *page;
 	unsigned long tid;
@@ -3276,11 +3276,28 @@ redo:
 	object = c->freelist;
 	page = c->page;
 	if (unlikely(!object || !node_match(page, node))) {
+		unsigned long cur_gp = get_state_rcu_gpnum();
+
 		VM_BUG_ON(c->total_objs);
-		object = __slab_alloc(s, gfpflags, node, addr, c);
+
 		stat(s, ALLOC_SLOWPATH);
+
+		if (unlikely(cur_gp != c->gp_seq)) {
+			calculate_avg(s, c, cur_gp);
+			/* Handle list move operations depending on the grace period */
+			handle_lists(s, c, cur_gp);
+		}
+
+		object = c->freelist;
+		if (object)
+			goto b1;
+
+		/* Fliping and merging can be considered based on alloc rate*/
+		object = __slab_alloc(s, gfpflags, node, addr, c);
 	} else {
-		void *next_object = get_freepointer_safe(s, object);
+		stat(s, ALLOC_FASTPATH);
+b1:
+		next_object = get_freepointer_safe(s, object);
 
 		/*
 		 * The cmpxchg will only match if there was no additional
@@ -3305,7 +3322,6 @@ redo:
 			goto redo;
 		}
 		prefetch_freepointer(s, next_object);
-		stat(s, ALLOC_FASTPATH);
 	}
 
 	c->total_objs--;
@@ -3321,67 +3337,7 @@ redo:
 static __always_inline void *slab_alloc_node_def(struct kmem_cache *s,
 		gfp_t gfpflags, int node, unsigned long addr)
 {
-	void **object, *next_object;
-	struct kmem_cache_cpu *c;
-	unsigned long tid;
-	unsigned long cur_gp = get_state_rcu_gpnum();
-
-	if (slab_pre_alloc_hook(s, gfpflags))
-		return NULL;
-
-	s = memcg_kmem_get_cache(s, gfpflags);
-redo:
-	preempt_disable();
-	c = this_cpu_ptr(s->cpu_slab);
-
-	tid = c->tid;
-	preempt_enable();
-
-	object = c->freelist;
-	if (unlikely(!object)) {
-		VM_BUG_ON(c->total_objs);
-
-		stat(s, ALLOC_SLOWPATH);
-
-		if (unlikely(cur_gp != c->gp_seq)) {
-			calculate_avg(s, c, cur_gp);
-			/* Handle list move operations depending on the grace period */
-			handle_lists(s, c, cur_gp);
-		}
-
-		object = c->freelist;
-		if (object)
-			goto b1;
-
-		/* Fliping and merging can be considered based on alloc rate*/
-		object = __slab_alloc(s, gfpflags, node, addr, c);
-	} else {
-		stat(s, ALLOC_FASTPATH);
-b1:
-		next_object = get_freepointer_safe(s, object);
-
-		if (unlikely(!this_cpu_cmpxchg_double(
-				s->cpu_slab->freelist, s->cpu_slab->tid,
-				object, tid,
-				next_object, next_tid(tid)))) {
-
-			note_cmpxchg_failure("slab_alloc", s, tid);
-			goto redo;
-		}
-		prefetch_freepointer(s, next_object);
-	}
-
-	c->total_objs--;
-
-	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
-			c->alloc_count, "alloc", s->name);
-
-	if (unlikely(gfpflags & __GFP_ZERO) && object)
-		memset(object, 0, s->object_size);
-
-	slab_post_alloc_hook(s, gfpflags, 1, &object);
-
-	return object;
+	return slab_alloc_node(s, gfpflags, node, addr);
 }
 
 static __always_inline void *slab_alloc(struct kmem_cache *s,
