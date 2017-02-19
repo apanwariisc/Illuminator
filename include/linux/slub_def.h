@@ -39,17 +39,6 @@ enum stat_item {
 	DEFERRED_FREE,      /* Freeing deferred until next grace period  */
 	NR_SLUB_STAT_ITEMS };
 
-struct gp_cache_data{
-	void **freelist;
-	unsigned long gp_seq; /* Required to know the safe free time of objects */
-	void *last;		/* Pointer to last object */
-	unsigned def_count;
-};
-
-enum gp_cache_index {
-	C_WAIT,
-	C_NEXT };
-
 struct kmem_cache_cpu {
 	void **freelist;	/* Pointer to next available object */
 	unsigned long tid;	/* Globally unique transaction id */

@@ -351,6 +351,157 @@ TRACE_EVENT(mm_page_alloc_extfrag,
 		__entry->change_ownership)
 );
 
+TRACE_EVENT(def_alloc_free,
+
+	TP_PROTO(unsigned long gp, int cpu, int total_objs, int alloc_count,
+		const char *op, const char *slab),
+
+	TP_ARGS(gp, cpu, total_objs, alloc_count, op, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        int, total_objs)
+		__field(        int, alloc_count)
+		__field(        const char *, op)
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->total_objs = total_objs;
+		__entry->alloc_count = alloc_count;
+		__entry->op = op;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d total_objs=%d alloc_count=%d op=%s slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->total_objs,
+		__entry->alloc_count,
+		__entry->op,
+		__entry->slab)
+);
+
+TRACE_EVENT(alloc_rate,
+
+	TP_PROTO(unsigned long gp, int cpu, int p0, int p1, int p2, int alloc_count,
+		int rate, int total_objs, const char *slab),
+
+	TP_ARGS(gp, cpu, p0, p1, p2, alloc_count, rate, total_objs, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        int, p0)
+		__field(        int, p1)
+		__field(        int, p2)
+		__field(        int, alloc_count)
+		__field(        int, rate   )
+		__field(        int, total_objs)
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->p0 = p0;
+		__entry->p1 = p1;
+		__entry->p2 = p2;
+		__entry->alloc_count = alloc_count;
+		__entry->rate = rate;
+		__entry->total_objs = total_objs;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d p0=%d p1=%d p2=%d alloc_count=%d rate=%d total_objs=%d slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->p0,
+		__entry->p1,
+		__entry->p2,
+		__entry->alloc_count,
+		__entry->rate,
+		__entry->total_objs,
+		__entry->slab)
+);
+
+TRACE_EVENT(new_slab,
+
+	TP_PROTO(unsigned long gp, int cpu, unsigned int total_objs,
+		unsigned long gp1, unsigned int def1,
+		unsigned long gp2, unsigned int def2, const char *slab),
+
+	TP_ARGS(gp, cpu, total_objs, gp1, def1, gp2, def2, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        unsigned int, total_objs   )
+		__field(        unsigned long, gp1   )
+		__field(        unsigned int, def1   )
+		__field(        unsigned long, gp2   )
+		__field(        unsigned int, def2   )
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->total_objs = total_objs;
+		__entry->gp1 = gp1;
+		__entry->def1 = def1;
+		__entry->gp2 = gp2;
+		__entry->def2 = def2;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d total_objs=%d, gp1=%ld, def1=%d, gp2=%ld, def2=%d slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->total_objs,
+		__entry->gp1,
+		__entry->def1,
+		__entry->gp2,
+		__entry->def2,
+		__entry->slab)
+);
+
+TRACE_EVENT(merge_page,
+
+	TP_PROTO(unsigned long gp, int cpu, int was_frozen,
+		void *prior, unsigned int inuse, const char *slab),
+
+	TP_ARGS(gp, cpu, was_frozen, prior, inuse, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        int, was_frozen)
+		__field(        void *, prior)
+		__field(        unsigned int, inuse)
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->was_frozen = was_frozen;
+		__entry->prior = prior;
+		__entry->inuse= inuse;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d was_frozen=%d, prior=0x%llx, inuse=%d, slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->was_frozen,
+		__entry->prior,
+		__entry->inuse,
+		__entry->slab)
+);
 #endif /* _TRACE_KMEM_H */
 
 /* This part must be outside protection */

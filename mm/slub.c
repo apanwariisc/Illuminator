@@ -16,6 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/bitops.h>
 #include <linux/slab.h>
+#include <linux/slub_def_prud.h>
 #include "slab.h"
 #include <linux/proc_fs.h>
 #include <linux/notifier.h>
@@ -45,6 +46,7 @@ static void slab_free(struct kmem_cache *s, struct page *page,
 static void __slab_free(struct kmem_cache *s, struct page *page,
 		void *head, void *tail, int cnt,
 		unsigned long addr);
+static void handle_page_lists(struct kmem_cache *s, struct page *page);
 
 #define incr_def_count(s, page) update_def_count(s, page, 1);
 #define decr_def_count(s, page) update_def_count(s, page, 0);
@@ -227,6 +229,18 @@ static inline void stat(const struct kmem_cache *s, enum stat_item si)
 	 * avoid this_cpu_add()'s irq-disable overhead.
 	 */
 	raw_cpu_inc(s->cpu_slab->stat[si]);
+#endif
+}
+
+static inline void stat_count(const struct kmem_cache *s, enum stat_item si,
+		unsigned count)
+{
+#ifdef CONFIG_SLUB_STATS
+	/*
+	 * The rmw is racy on a preemptible kernel but this is acceptable, so
+	 * avoid this_cpu_add()'s irq-disable overhead.
+	 */
+	raw_cpu_add(s->cpu_slab->stat[si], count);
 #endif
 }
 
@@ -1483,7 +1497,9 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	page->freelist = start;
 	page->inuse = page->objects;
 	atomic_long_set(&page->deferred, 0);
+	atomic_long_set(&page->is_partial, 0);
 	page->frozen = 1;
+	memset(&page->gp_cache, 0, sizeof(struct gp_cache_data) * 2);
 
 out:
 	if (gfpflags_allow_blocking(flags))
@@ -1589,11 +1605,14 @@ static void discard_slab(struct kmem_cache *s, struct page *page)
 static inline void
 __add_partial(struct kmem_cache_node *n, struct page *page, int tail)
 {
-	n->nr_partial++;
-	if (tail == DEACTIVATE_TO_TAIL)
-		list_add_tail(&page->lru, &n->partial);
-	else
-		list_add(&page->lru, &n->partial);
+	if (!atomic_long_read(&page->is_partial)) {
+		atomic_long_set(&page->is_partial, 1);
+		n->nr_partial++;
+		if (tail == DEACTIVATE_TO_TAIL)
+			list_add_tail(&page->lru, &n->partial);
+		else
+			list_add(&page->lru, &n->partial);
+	}
 }
 
 static inline void add_partial(struct kmem_cache_node *n,
@@ -1603,12 +1622,21 @@ static inline void add_partial(struct kmem_cache_node *n,
 	__add_partial(n, page, tail);
 }
 
+static inline void
+__remove_partial(struct kmem_cache_node *n, struct page *page)
+{
+	if (atomic_long_read(&page->is_partial) == 1) {
+		atomic_long_set(&page->is_partial, 0);
+		list_del(&page->lru);
+		n->nr_partial--;
+	}
+}
+
 static inline void remove_partial(struct kmem_cache_node *n,
 					struct page *page)
 {
 	lockdep_assert_held(&n->list_lock);
-	list_del(&page->lru);
-	n->nr_partial--;
+	__remove_partial(n, page);
 }
 
 /*
@@ -1685,6 +1713,10 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 		void *t;
 
 		if (!pfmemalloc_match(page, flags))
+			continue;
+
+		handle_page_lists(s, page);
+		if (page->inuse == page->objects)
 			continue;
 
 		t = acquire_slab(s, n, page, object == NULL, &objects);
@@ -2280,6 +2312,11 @@ static inline void *new_slab_objects(struct kmem_cache *s, gfp_t flags,
 	if (freelist)
 		return freelist;
 
+	trace_new_slab(get_state_rcu_gpnum(), smp_processor_id(), c->total_objs,
+			c->gp_cache[C_WAIT].gp_seq, c->gp_cache[C_WAIT].def_count,
+			c->gp_cache[C_NEXT].gp_seq, c->gp_cache[C_NEXT].def_count,
+			s->name);
+
 	page = new_slab(s, flags, node);
 	if (page) {
 		c = raw_cpu_ptr(s->cpu_slab);
@@ -2328,6 +2365,8 @@ static inline void *get_freelist(struct kmem_cache *s, struct page *page)
 	unsigned long counters;
 	void *freelist;
 	unsigned int new_free;
+
+	handle_page_lists(s, page);
 
 	do {
 		freelist = page->freelist;
@@ -2392,6 +2431,14 @@ void kfree_unhint(const void *x)
 }
 EXPORT_SYMBOL(kfree_unhint);
 
+static inline bool pre_reap_calc(struct kmem_cache *s, struct kmem_cache_cpu *c)
+{
+	if (c->gp_cache[C_NEXT].def_count < (c->alloc_rate - c->free_rate))
+		return false;
+	else
+		return true;
+}
+
 static inline void flip_next_wait_current(struct kmem_cache *s,
 		struct kmem_cache_cpu *c)
 {
@@ -2407,6 +2454,7 @@ static inline void flip_next_wait_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
+		stat_count(s, FREE_FASTPATH, cache_wait->def_count);
 	}
 
 	if (cache_next->freelist) {
@@ -2440,6 +2488,8 @@ static inline void merge_to_current(struct kmem_cache *s,
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
 
+		stat_count(s, FREE_FASTPATH, cache_wait->def_count);
+
 		/* Reset wait list */
 		cache_wait->freelist = NULL;
 		cache_wait->gp_seq = 0;
@@ -2459,6 +2509,8 @@ static inline void merge_to_current(struct kmem_cache *s,
 		c->freelist = cache_next->freelist;
 		c->total_objs += cache_next->def_count;
 
+		stat_count(s, FREE_FASTPATH, cache_next->def_count);
+
 		/* Reset next list */
 		cache_next->freelist = NULL;
 		cache_next->gp_seq = 0;
@@ -2467,6 +2519,134 @@ static inline void merge_to_current(struct kmem_cache *s,
 	}
 
 	VM_BUG_ON(cache_next->gp_seq || cache_next->def_count);
+}
+
+/* Caller is responsible for acquiring slab_lock(page) */
+static void inline merge_page_list(struct kmem_cache *s, struct page *page,
+		struct gp_cache_data *cache)
+{
+	struct page new;
+	void *prior;
+	unsigned long counters;
+	void **object;
+	int was_frozen;
+	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
+
+	/* Move wait list to freelist */
+	if (!cache->freelist)
+		return;
+
+	object = cache->last;
+
+	/* To take care of parallel frees */
+	do {
+		prior = page->freelist;
+		counters = page->counters;
+		set_freepointer(s, object, prior);
+
+		new.counters = counters;
+		was_frozen = new.frozen;
+
+		VM_BUG_ON(new.inuse < cache->def_count);
+		new.inuse -= cache->def_count;
+	} while (!__cmpxchg_double_slab(s, page,
+				prior, counters,
+				cache->freelist, new.counters,
+				"def merge freelist"));
+
+	/* Reset wait list */
+	cache->freelist = NULL;
+	cache->gp_seq = 0;
+	cache->def_count = 0;
+	cache->last = NULL;
+
+	VM_BUG_ON(cache->gp_seq || cache->def_count);
+
+	trace_merge_page(get_state_rcu_gpnum(), smp_processor_id(), was_frozen, prior,
+			new.inuse, s->name);
+
+#if 0
+	if (was_frozen)
+		return;
+
+	if (unlikely(!new.inuse && n->nr_partial >= s->min_partial)) {
+		stat(s, FREE_SLAB);
+		discard_slab(s, page);
+	}
+#endif
+}
+
+static bool pre_move_page(struct kmem_cache *s, struct page *page)
+{
+	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
+	struct list_head *entry = &page->lru;
+	struct gp_cache_data *cache_next, *cache_wait;
+	unsigned long uninitialized_var(flags);
+
+	/*
+	 * Need to move a slab from full list to node partial list whenever an
+	 * object is deferred freed first time. Ugly hack.
+	 */
+	if (page->frozen) {
+		return;
+	}
+
+	cache_next = &page->gp_cache[C_NEXT];
+	cache_wait = &page->gp_cache[C_WAIT];
+
+	if (unlikely(n->nr_partial >= s->min_partial &&
+			(cache_next->def_count + cache_wait->def_count) == page->inuse)) {
+
+		spin_lock_irqsave(&n->list_lock, flags);
+		remove_partial(n, page);
+		stat(s, FREE_REMOVE_PARTIAL);
+		spin_unlock_irqrestore(&n->list_lock, flags);
+
+		stat(s, FREE_SLAB);
+		discard_slab(s, page);
+
+		return true;
+	}
+
+	/*
+	 * Check if the page is on partial list without node list lock
+	 * and try to add partial list holding a lock.
+	 */
+	if (!atomic_long_read(&page->is_partial)) {
+		spin_lock_irqsave(&n->list_lock, flags);
+		add_partial(n, page, DEACTIVATE_TO_TAIL);
+		stat(s, FREE_ADD_PARTIAL);
+		spin_unlock_irqrestore(&n->list_lock, flags);
+	}
+	return false;
+}
+
+static void pre_move_page_frozen(struct kmem_cache *s, struct page *page)
+{
+	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
+	struct list_head *entry = &page->lru;
+	struct gp_cache_data *cache_next, *cache_wait;
+	unsigned long uninitialized_var(flags);
+
+	cache_next = &page->gp_cache[C_NEXT];
+	cache_wait = &page->gp_cache[C_WAIT];
+
+	if (unlikely(n->nr_partial >= s->min_partial &&
+			(!page->inuse ||
+			(cache_next->def_count + cache_wait->def_count) == page->inuse))) {
+
+		stat(s, FREE_SLAB);
+		discard_slab(s, page);
+
+		return;
+	}
+
+	if (cache_next->freelist || cache_wait->freelist) {
+		spin_lock_irqsave(&n->list_lock, flags);
+		add_partial(n, page, DEACTIVATE_TO_TAIL);
+		spin_unlock_irqrestore(&n->list_lock, flags);
+		stat(s, FREE_ADD_PARTIAL);
+	}
 }
 
 static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
@@ -2493,6 +2673,56 @@ static void handle_lists(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	}
 }
 
+/* TODO: Merge with above function */
+static void handle_page_lists(struct kmem_cache *s, struct page *page)
+{
+	struct gp_cache_data *cache_next, *cache_wait;
+	unsigned long completed_gp = get_state_rcu_gpcompleted();
+
+	cache_next = &page->gp_cache[C_NEXT];
+	cache_wait = &page->gp_cache[C_WAIT];
+
+	if (cache_next->gp_seq && cache_next->gp_seq <= completed_gp) {
+		/*
+		 * Merge to page freelist
+		 *
+		 * Lock page to avoid parallel deferred frees.
+		 * XXX Will cause on deadlock on archs not
+		 * supporting cmpxchg_double
+		 */
+		slab_lock(page);
+		merge_page_list(s, page, cache_wait);
+		merge_page_list(s, page, cache_next);
+		slab_unlock(page);
+	} else if (cache_next->gp_seq == get_state_rcu_gpnum()) {
+		/*
+		 * A grace period has passed. Flip wait to page freelist and
+		 * next to wait.
+		 */
+		slab_lock(page);
+		merge_page_list(s, page, cache_wait);
+		if (cache_next->freelist) {
+			/* Move next list to wait */
+			cache_wait->freelist = cache_next->freelist;
+			cache_wait->last = cache_next->last;
+			cache_wait->gp_seq = cache_next->gp_seq;
+			cache_wait->def_count = cache_next->def_count;
+
+			/* Reset next list */
+			cache_next->freelist = NULL;
+			cache_next->gp_seq = 0;
+			cache_next->def_count = 0;
+			cache_next->last = NULL;
+		}
+		slab_unlock(page);
+	} else if (cache_wait->gp_seq && cache_wait->gp_seq <= completed_gp) {
+		/* Elements in wait list are safe */
+		slab_lock(page);
+		merge_page_list(s, page, cache_wait);
+		slab_unlock(page);
+	}
+}
+
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
@@ -2507,6 +2737,8 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	 * cache size
 	 */
 	switch (cur_gp - c->gp_seq) {
+		case 0:
+			VM_BUG_ON(1);
 		case 1:
 			break;
 		case 2:
@@ -2522,6 +2754,10 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	}
 	c->alloc_rate = (c->prev_alloc[0] + c->prev_alloc[1] +
 					c->prev_alloc[2] + c->alloc_count) / 4;
+
+	trace_alloc_rate(c->gp_seq, smp_processor_id(), c->prev_alloc[0],
+			c->prev_alloc[1], c->prev_alloc[2], c->alloc_count, c->alloc_rate,
+			c->total_objs, s->name);
 
 	/* Don't let allocation rate to be set too low */
 	if (c->alloc_rate < nr_objs)
@@ -2598,6 +2834,12 @@ redo:
 	freelist = get_freelist(s, page);
 
 	if (!freelist) {
+		/*
+		 * If we have any pending deferred frees on this page move the
+		 * page to node partial list instead of full list
+		 */
+		pre_move_page_frozen(s, page);
+
 		c->page = NULL;
 		stat(s, DEACTIVATE_BYPASS);
 		goto new_slab;
@@ -2816,6 +3058,9 @@ redo:
 	c->total_objs--;
 	c->alloc_count++;
 
+	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
+			c->alloc_count, "alloc", s->name);
+
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
 
@@ -3009,6 +3254,7 @@ static void __slab_free(struct kmem_cache *s, struct page *page,
 	if (!kmem_cache_has_cpu_partial(s) && unlikely(!prior)) {
 		if (kmem_cache_debug(s))
 			remove_full(s, n, page);
+
 		add_partial(n, page, DEACTIVATE_TO_TAIL);
 		stat(s, FREE_ADD_PARTIAL);
 	}
@@ -3100,14 +3346,25 @@ static void slab_free_deferred(struct kmem_cache *s,
 	void **object = (void *)x;
 	struct gp_cache_data *cache_next;
 	unsigned long cur_gp = get_state_rcu_gpnum();
+	bool pre_reap = 0;
 
 	c = __this_cpu_ptr(s->cpu_slab);
-	cache_next = &c->gp_cache[C_NEXT];
 
 	if (cur_gp != c->gp_seq) {
 		calculate_avg(s, c, cur_gp);
 		/* Handle list move operations depending on the grace period */
 		handle_lists(s, c, cur_gp);
+	}
+
+	/* Calculate the condition for pre-reaping the cache */
+	pre_reap = pre_reap_calc(s, c);
+
+	if (pre_reap) {
+		stat(s, FREE_SLOWPATH);
+		cache_next = &page->gp_cache[C_NEXT];
+		slab_lock(page);
+	} else {
+		cache_next = &c->gp_cache[C_NEXT];
 	}
 
 	if (unlikely(!cache_next->gp_seq)) {
@@ -3118,9 +3375,19 @@ static void slab_free_deferred(struct kmem_cache *s,
 
 	set_freepointer(s, object, cache_next->freelist);
 	cache_next->freelist = object;
-
-	stat(s, DEFERRED_FREE);
 	cache_next->def_count++;
+
+	if (pre_reap) {
+		slab_unlock(page);
+		/* Check if we can discard a page else move to node partial list */
+		pre_move_page(s, page);
+	}
+
+out:
+	stat(s, DEFERRED_FREE);
+
+	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
+			c->alloc_count, "free", s->name);
 }
 
 void kmem_cache_free(struct kmem_cache *s, void *x)
