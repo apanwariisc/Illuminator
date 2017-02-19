@@ -41,7 +41,7 @@ enum stat_item {
 
 struct gp_cache_data{
 	void **freelist;
-	unsigned long gp_seq;
+	unsigned long gp_seq; /* Required to know the safe free time of objects */
 	void *last;		/* Pointer to last object */
 	unsigned def_count;
 };
@@ -59,6 +59,11 @@ struct kmem_cache_cpu {
 	unsigned int total_objs;
 	struct gp_cache_data gp_cache[2];	/* gp based caches */
 	struct page *partial;	/* Partially allocated frozen slabs */
+	unsigned int prev_alloc[3];
+	unsigned int prev_free[3];
+	unsigned long gp_seq;	/* To calc avg alloc rate*/
+	int alloc_rate;
+	int free_rate;
 #ifdef CONFIG_SLUB_STATS
 	unsigned stat[NR_SLUB_STAT_ITEMS];
 #endif
