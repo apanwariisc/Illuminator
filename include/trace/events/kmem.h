@@ -388,9 +388,10 @@ TRACE_EVENT(def_alloc_free,
 TRACE_EVENT(alloc_rate,
 
 	TP_PROTO(unsigned long gp, int cpu, int p0, int p1, int p2, int alloc_count,
-		int rate, int total_objs, const char *slab),
+		int rate, int free_count, int f_rate, int total_objs, const char *slab),
 
-	TP_ARGS(gp, cpu, p0, p1, p2, alloc_count, rate, total_objs, slab),
+	TP_ARGS(gp, cpu, p0, p1, p2, alloc_count, rate, free_count, f_rate,
+			total_objs, slab),
 
 	TP_STRUCT__entry(
 		__field(        unsigned long, gp              )
@@ -400,6 +401,8 @@ TRACE_EVENT(alloc_rate,
 		__field(        int, p2)
 		__field(        int, alloc_count)
 		__field(        int, rate   )
+		__field(        int, free_count)
+		__field(        int, f_rate   )
 		__field(        int, total_objs)
 		__field(        const char *, slab)
 	),
@@ -412,11 +415,13 @@ TRACE_EVENT(alloc_rate,
 		__entry->p2 = p2;
 		__entry->alloc_count = alloc_count;
 		__entry->rate = rate;
+		__entry->free_count = free_count;
+		__entry->f_rate = f_rate;
 		__entry->total_objs = total_objs;
 		__entry->slab = slab;
 	),
 
-	TP_printk("gp=%ld cpu=%d p0=%d p1=%d p2=%d alloc_count=%d rate=%d total_objs=%d slab=%s",
+	TP_printk("gp=%ld cpu=%d p0=%d p1=%d p2=%d alloc_count=%d rate=%d f_count=%d f_rate=%d total_objs=%d slab=%s",
 		__entry->gp,
 		__entry->cpu,
 		__entry->p0,
@@ -424,6 +429,8 @@ TRACE_EVENT(alloc_rate,
 		__entry->p2,
 		__entry->alloc_count,
 		__entry->rate,
+		__entry->free_count,
+		__entry->f_rate,
 		__entry->total_objs,
 		__entry->slab)
 );
@@ -500,6 +507,40 @@ TRACE_EVENT(merge_page,
 		__entry->was_frozen,
 		__entry->prior,
 		__entry->inuse,
+		__entry->slab)
+);
+
+TRACE_EVENT(page_obj_stat,
+
+	TP_PROTO(int node, unsigned int inuse, unsigned int def_w,
+		unsigned int def_n, unsigned int objects, const char *slab),
+
+	TP_ARGS(node, inuse, def_w, def_n, objects, slab),
+
+	TP_STRUCT__entry(
+		__field(        int, node)
+		__field(        unsigned int, inuse)
+		__field(        unsigned int, def_w   )
+		__field(        unsigned int, def_n   )
+		__field(        unsigned int, objects   )
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->node = node;
+		__entry->inuse = inuse;
+		__entry->def_w = def_w;
+		__entry->def_n = def_n;
+		__entry->objects = objects;
+		__entry->slab = slab;
+	),
+
+	TP_printk("node=%d inuse=%d, def_w=%d, def_n=%d objects=%d, slab=%s",
+		__entry->node,
+		__entry->inuse,
+		__entry->def_w,
+		__entry->def_n,
+		__entry->objects,
 		__entry->slab)
 );
 #endif /* _TRACE_KMEM_H */
