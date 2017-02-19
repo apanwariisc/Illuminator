@@ -2524,7 +2524,6 @@ static void inline merge_page_list(struct kmem_cache *s, struct page *page,
 	unsigned long counters;
 	void **object;
 	int was_frozen;
-	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
 
 	/* Move wait list to freelist */
 	if (!cache->freelist)
@@ -2570,10 +2569,9 @@ static void inline merge_page_list(struct kmem_cache *s, struct page *page,
 #endif
 }
 
-static bool pre_move_page(struct kmem_cache *s, struct page *page)
+static void pre_move_page(struct kmem_cache *s, struct page *page)
 {
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
-	struct list_head *entry = &page->lru;
 	struct gp_cache_data *cache_next, *cache_wait;
 	unsigned long uninitialized_var(flags);
 
@@ -2599,7 +2597,7 @@ static bool pre_move_page(struct kmem_cache *s, struct page *page)
 		stat(s, FREE_SLAB);
 		discard_slab(s, page);
 
-		return true;
+		return;
 	}
 
 	/*
@@ -2612,13 +2610,12 @@ static bool pre_move_page(struct kmem_cache *s, struct page *page)
 		stat(s, FREE_ADD_PARTIAL);
 		spin_unlock_irqrestore(&n->list_lock, flags);
 	}
-	return false;
+	return;
 }
 
 static void pre_move_page_frozen(struct kmem_cache *s, struct page *page)
 {
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
-	struct list_head *entry = &page->lru;
 	struct gp_cache_data *cache_next, *cache_wait;
 	unsigned long uninitialized_var(flags);
 
@@ -2684,6 +2681,8 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 		 * XXX Will cause on deadlock on archs not
 		 * supporting cmpxchg_double
 		 */
+		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+
 		slab_lock(page);
 		merge_page_list(s, page, cache_wait);
 		merge_page_list(s, page, cache_next);
@@ -2693,6 +2692,8 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 		 * A grace period has passed. Flip wait to page freelist and
 		 * next to wait.
 		 */
+		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+
 		slab_lock(page);
 		merge_page_list(s, page, cache_wait);
 		if (cache_next->freelist) {
@@ -2711,6 +2712,8 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 		slab_unlock(page);
 	} else if (cache_wait->gp_seq && cache_wait->gp_seq <= completed_gp) {
 		/* Elements in wait list are safe */
+		stat_count(s, FREE_SLOWPATH, cache_wait->def_count);
+
 		slab_lock(page);
 		merge_page_list(s, page, cache_wait);
 		slab_unlock(page);
@@ -2720,6 +2723,8 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
+	return;
+#if 0
 	unsigned short i = cur_gp % 3;
 	int peak = oo_objects(s->oo) * 4;
 
@@ -2779,6 +2784,7 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 			c->alloc_rate = peak;
 			/* stat(s, PEAK_OVERFLOW); */
 	}
+#endif
 }
 
 /*
@@ -3012,7 +3018,7 @@ redo:
 	}
 
 	c->total_objs--;
-	c->alloc_count++;
+	/* c->alloc_count++; */
 
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
@@ -3069,7 +3075,7 @@ redo:
 	}
 
 	c->total_objs--;
-	c->alloc_count++;
+	/* c->alloc_count++; */
 
 	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
 			c->alloc_count, "alloc", s->name);
@@ -3186,8 +3192,6 @@ static void __slab_free(struct kmem_cache *s, struct page *page,
 	unsigned long counters;
 	struct kmem_cache_node *n = NULL;
 	unsigned long uninitialized_var(flags);
-
-	stat(s, FREE_SLOWPATH);
 
 	if (kmem_cache_debug(s) &&
 	    !(n = free_debug_processing(s, page, head, tail, cnt,
@@ -3345,10 +3349,12 @@ redo:
 		}
 		stat(s, FREE_FASTPATH);
 		c->total_objs++;
-	} else
+	} else {
+		stat(s, FREE_SLOWPATH);
 		__slab_free(s, page, head, tail_obj, cnt, addr);
+	}
 
-	c->free_count++;
+	/* c->free_count++; */
 }
 
 static void slab_free_deferred(struct kmem_cache *s,
@@ -3359,7 +3365,7 @@ static void slab_free_deferred(struct kmem_cache *s,
 	void **object = (void *)x;
 	struct gp_cache_data *cache_next;
 	unsigned long cur_gp = get_state_rcu_gpnum();
-	bool pre_reap = 0;
+	bool pre_reap = false;
 
 	c = __this_cpu_ptr(s->cpu_slab);
 
@@ -3374,13 +3380,10 @@ static void slab_free_deferred(struct kmem_cache *s,
 	/* Calculate the condition for pre-reaping the cache */
 	if (likely(c->page == page)) {
 		pre_reap = false;
-	} else if (page->frozen || cache_next->def_count >= c->alloc_rate) {
-		/* || page_to_nid(page) != numa_node_id()) */
+	} else if (cache_next->def_count > oo_objects(s->oo) ||
+			c->total_objs > oo_objects(s->oo) ||
+			page_to_nid(page) != numa_node_id()) {
 		pre_reap = true;
-	}
-
-	if (pre_reap) {
-		stat(s, FREE_SLOWPATH);
 		cache_next = &page->gp_cache[C_NEXT];
 		slab_lock(page);
 	}
@@ -5434,7 +5437,7 @@ static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 {
 	int empty_slabs = 0;
 	int cpu;
-	int node;
+	int node = 0;
 	struct kmem_cache_node *n;
 
 	/* Partial list of all CPUs */
@@ -5457,12 +5460,15 @@ static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 			struct gp_cache_data *cache_next = &page->gp_cache[C_NEXT],
 								 *cache_wait = &page->gp_cache[C_WAIT];
 
-			trace_page_obj_stat(n, page->inuse, cache_wait->def_count,
+			trace_page_obj_stat(node, page->inuse, cache_wait->def_count,
 					cache_next->def_count, page->objects, s->name);
 
 			if (!page->inuse || page->inuse == (cache_next->def_count +
 					cache_wait->def_count))
 				empty_slabs++;
+
+			if ((cache_next->def_count + cache_wait->def_count) > page->inuse)
+				pr_err("Slab error. Page objects corrupt\n");
 		}
 	}
 
