@@ -1554,7 +1554,7 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	struct dentry *dentry;
 	char *dname;
 
-	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL);
+	dentry = kmem_cache_alloc_def(dentry_cache, GFP_KERNEL);
 	if (!dentry)
 		return NULL;
 

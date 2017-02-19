@@ -604,7 +604,7 @@ int fasync_remove_entry(struct file *filp, struct fasync_struct **fapp)
 
 struct fasync_struct *fasync_alloc(void)
 {
-	return kmem_cache_alloc(fasync_cache, GFP_KERNEL);
+	return kmem_cache_alloc_def(fasync_cache, GFP_KERNEL);
 }
 
 /*
