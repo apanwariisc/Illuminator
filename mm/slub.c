@@ -1716,8 +1716,7 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 {
 	struct page *page, *page2, *best = NULL;
 	void *object = NULL;
-	int objects, count = 10;
-	int best_future = 0, best_avl = 0;
+	int objects, best_inuse, count = 10;
 
 	/*
 	 * Racy check. If we mistakenly see no partial slabs then we
@@ -1730,24 +1729,22 @@ static void *get_partial_node(struct kmem_cache *s, struct kmem_cache_node *n,
 
 	spin_lock(&n->list_lock);
 	list_for_each_entry_safe(page, page2, &n->partial, lru) {
-		int future_avl, cur_avl;
 
 		if (!pfmemalloc_match(page, flags))
 			continue;
 
-		future_avl = handle_page_lists(s, page);
-		cur_avl = page->objects - page->inuse;
-		if (!cur_avl)
+		if (unlikely(!(page->objects - page->inuse)))
 			continue;
 
-		if (cur_avl > best_avl && ((future_avl + cur_avl) > (best_future + best_avl))) {
+		if (page->inuse > best_inuse) {
 			best = page;
-			best_future = future_avl;
-			best_avl = cur_avl;
+			best_inuse = page->inuse;
 		}
 
-		if (count--)
+		if (!count)
 			break;
+
+		count--;
 	}
 
 	if (!best)
@@ -2913,8 +2910,8 @@ static short process_idle(struct kmem_cache *s)
 {
 	void *object, *prev = NULL, *nextfree;
 	struct kmem_cache_cpu *c;
-	unsigned long cur_gp = get_state_rcu_gpnum();
-	int limit = 20, cpu = smp_processor_id();
+	unsigned long cur_gp = get_state_rcu_gpnum(), node_count = 0;
+	int cpu = smp_processor_id();
 	int obj_limit = oo_objects(s->oo);
 	struct kmem_cache_node *n = NULL;
 	struct page *page = NULL, *page2;
@@ -2934,8 +2931,7 @@ static short process_idle(struct kmem_cache *s)
 	if (need_resched())
 		return 1;
 
-	if (!c->freelist || !c->need_work) {
-		c->need_work = false;
+	if (!c->freelist ) {
 		goto page_process;
 	} else {
 		object = c->freelist;
@@ -2956,32 +2952,28 @@ static short process_idle(struct kmem_cache *s)
 			c->need_work = false;
 			goto page_process;
 		} else {
-			obj_limit = c->alloc_rate + limit;
+			obj_limit = c->alloc_rate;
 		}
 	} else {
-		obj_limit = c->alloc_rate * 2;
+		obj_limit = c->alloc_rate;
 	}
 
 	/* Do Cache reaping */
-	while (c->total_objs > obj_limit && limit) {
+	while (c->total_objs > obj_limit) {
 
 		nextfree = get_freepointer(s, object);
 		prefetch_freepointer(s, nextfree);
 		page = virt_to_head_page(object);
 
-#if 0
-		if (aggressive_reclaim != 2 &&
-				(c->page == page ||	!atomic_long_read(&page->is_partial))) ||
-				(aggressive_reclaim == 1 && c->page == page)) {
+		if (c->page == page) {
 			prev = object;
 			object = nextfree;
 
-			if (!object)
+			if (!object || need_resched())
 				break;
 
 			continue;
 		}
-#endif
 
 		if (prev)
 			set_freepointer(s, prev, nextfree);
@@ -2992,26 +2984,24 @@ static short process_idle(struct kmem_cache *s)
 
 		c->total_objs--;
 		object = nextfree;
-		if (!object)
+		if (!object || need_resched())
 			break;
-		limit--;
 	}
 
 	trace_idle_work(c->gp_seq, smp_processor_id(), c->alloc_rate, limit, c->total_objs,
 			s->name);
 
-	if (limit)
-		c->need_work = false;
-
-page_process:
-
 	if (need_resched())
 		return 1;
+
+page_process:
 
 	if (!n || !n->nr_partial)
 		return 0;
 
+	/* Reclaim 1/10 of the partial list every time */
 	spin_lock(&n->list_lock);
+	node_count = n->nr_partial;
 	list_for_each_entry_safe(page, page2, &n->partial, lru) {
 		struct gp_cache_data *cache_next = &page->gp_cache[C_NEXT];
 		struct gp_cache_data *cache_wait = &page->gp_cache[C_WAIT];
@@ -3029,9 +3019,11 @@ page_process:
 
 		} else {
 			handle_page_lists(s, page);
+			if (!(page->objects - page->inuse))
+				list_move_tail(&page->lru, &n->partial);
 		}
 
-		if (need_resched()) {
+		if (need_resched() || !node_count--) {
 			spin_unlock(&n->list_lock);
 			return 1;
 		}
