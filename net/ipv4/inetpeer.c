@@ -444,7 +444,7 @@ relookup:
 		if (gccnt && create)
 			goto relookup;
 	}
-	p = create ? kmem_cache_alloc(peer_cachep, GFP_ATOMIC) : NULL;
+	p = create ? kmem_cache_alloc_def(peer_cachep, GFP_ATOMIC) : NULL;
 	if (p) {
 		p->daddr = *daddr;
 		atomic_set(&p->refcnt, 1);

@@ -892,7 +892,7 @@ skip:
 /* Allocate a multicast cache entry */
 static struct mfc_cache *ipmr_cache_alloc(void)
 {
-	struct mfc_cache *c = kmem_cache_zalloc(mrt_cachep, GFP_KERNEL);
+	struct mfc_cache *c = kmem_cache_zalloc_def(mrt_cachep, GFP_KERNEL);
 
 	if (c)
 		c->mfc_un.res.minvif = MAXVIFS;
