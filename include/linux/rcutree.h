@@ -76,6 +76,8 @@ void rcu_barrier_bh(void);
 void rcu_barrier_sched(void);
 unsigned long get_state_synchronize_rcu(void);
 void cond_synchronize_rcu(unsigned long oldstate);
+unsigned long get_state_rcu_gpnum(void);
+unsigned long get_state_rcu_gpcompleted(void);
 unsigned long get_state_synchronize_sched(void);
 void cond_synchronize_sched(unsigned long oldstate);
 

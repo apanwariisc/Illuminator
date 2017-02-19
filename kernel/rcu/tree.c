@@ -3301,6 +3301,28 @@ void cond_synchronize_rcu(unsigned long oldstate)
 EXPORT_SYMBOL_GPL(cond_synchronize_rcu);
 
 /**
+ * get_state_rcu_gpnum
+ *
+ * Returns the current RCU gpnum
+ */
+inline unsigned long get_state_rcu_gpnum(void)
+{
+	return rcu_state_p->gpnum + 300;
+}
+EXPORT_SYMBOL_GPL(get_state_rcu_gpnum);
+
+/**
+ * get_state_rcu_completed
+ *
+ * Returns the completed RCU gpnum
+ */
+inline unsigned long get_state_rcu_gpcompleted(void)
+{
+	return rcu_state_p->completed + 300;
+}
+EXPORT_SYMBOL_GPL(get_state_rcu_gpcompleted);
+
+/**
  * get_state_synchronize_sched - Snapshot current RCU-sched state
  *
  * Returns a cookie that is used by a later call to cond_synchronize_sched()
