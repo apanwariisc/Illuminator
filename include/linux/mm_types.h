@@ -12,6 +12,7 @@
 #include <linux/cpumask.h>
 #include <linux/uprobes.h>
 #include <linux/page-flags-layout.h>
+#include <linux/slub_def_prud.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 
@@ -189,8 +190,11 @@ struct page {
 	struct mem_cgroup *mem_cgroup;
 #endif
 
+	/* Private Data pointer for SLUB */
 	/* This holds info on number of objects deferred for freeing */
 	atomic_long_t deferred;
+	atomic_long_t is_partial;
+	struct gp_cache_data gp_cache[2];
 
 	/*
 	 * On machines where all RAM is mapped into kernel address space,
