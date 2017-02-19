@@ -3698,6 +3698,18 @@ void kmem_cache_free_deferred(struct kmem_cache *s, void *x,
 }
 EXPORT_SYMBOL(kmem_cache_free_deferred);
 
+void kmem_cache_free_def(struct kmem_cache *s, void *x,
+		__always_unused struct rcu_head *head)
+{
+	s = cache_from_obj(s, x);
+	if (!s)
+		return;
+
+	slab_free_deferred(s, virt_to_head_page(x), x, _RET_IP_);
+	trace_kmem_cache_free(_RET_IP_, x);
+}
+EXPORT_SYMBOL(kmem_cache_free_def);
+
 static void slab_reclaim(struct kmem_cache *s, unsigned long all)
 {
 	int cpu, node;

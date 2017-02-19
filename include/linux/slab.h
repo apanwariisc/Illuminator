@@ -321,6 +321,7 @@ void *kmem_cache_alloc(struct kmem_cache *, gfp_t flags) __assume_slab_alignment
 void *kmem_cache_alloc_def(struct kmem_cache *, gfp_t flags) __assume_slab_alignment;
 void kmem_cache_free(struct kmem_cache *, void *);
 void kmem_cache_free_deferred(struct kmem_cache *, void *, struct rcu_head *);
+void kmem_cache_free_def(struct kmem_cache *, void *, struct rcu_head *);
 void kmem_cache_free_hint(struct kmem_cache *s, void *x);
 void kmem_cache_free_unhint(struct kmem_cache *s, void *x);
 

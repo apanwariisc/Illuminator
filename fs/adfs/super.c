@@ -251,15 +251,12 @@ static struct inode *adfs_alloc_inode(struct super_block *sb)
 static void adfs_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	kmem_cache_free_def(adfs_inode_cachep, ADFS_I(inode));
+	kmem_cache_free(adfs_inode_cachep, ADFS_I(inode));
 }
 
 static void adfs_destroy_inode(struct inode *inode)
 {
-	adfs_i_callback(&inode->i_rcu);
-#if 0
 	call_rcu(&inode->i_rcu, adfs_i_callback);
-#endif
 }
 
 static void init_once(void *foo)
