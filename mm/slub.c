@@ -2433,14 +2433,6 @@ void kfree_unhint(const void *x)
 }
 EXPORT_SYMBOL(kfree_unhint);
 
-static inline bool pre_reap_calc(struct kmem_cache *s, struct kmem_cache_cpu *c)
-{
-	if (c->gp_cache[C_NEXT].def_count < (c->alloc_rate - c->free_rate))
-		return false;
-	else
-		return true;
-}
-
 static inline void flip_next_wait_current(struct kmem_cache *s,
 		struct kmem_cache_cpu *c)
 {
@@ -2729,7 +2721,7 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
 	unsigned short i = cur_gp % 3;
-	int nr_objs = oo_objects(s->oo);
+	int peak = oo_objects(s->oo) * 4;
 
 	/*
 	 * Grace period has expired. Calculate averages
@@ -2744,17 +2736,17 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		case 1:
 			break;
 		case 2:
-			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
+			c->prev_alloc[i == 0 ? 2: (i - 1)] = 0;
 			c->prev_free[i == 0 ? 2: (i - 1)] = 0;
 			break;
 		case 3:
-			c->prev_alloc[i == 0 ? 2: (i - 1)] = nr_objs;
-			c->prev_alloc[i == 2 ? 0: (i + 1)] = nr_objs;
+			c->prev_alloc[i == 0 ? 2: (i - 1)] = 0;
+			c->prev_alloc[i == 2 ? 0: (i + 1)] = 0;
 			c->prev_free[i == 0 ? 2: (i - 1)] = 0;
 			c->prev_free[i == 2 ? 0: (i + 1)] = 0;
 			break;
 		default:
-			c->prev_alloc[0] = c->prev_alloc[1] = c->prev_alloc[2] = nr_objs;
+			c->prev_alloc[0] = c->prev_alloc[1] = c->prev_alloc[2] = 0;
 			c->prev_free[0] = c->prev_free[1] = c->prev_free[2] = 0;
 			break;
 	}
@@ -2766,11 +2758,7 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 
 	trace_alloc_rate(c->gp_seq, smp_processor_id(), c->prev_alloc[0],
 			c->prev_alloc[1], c->prev_alloc[2], c->alloc_count, c->alloc_rate,
-			c->total_objs, s->name);
-
-	/* Don't let allocation rate to be set too low */
-	if (c->alloc_rate < nr_objs)
-		c->alloc_rate = nr_objs;
+			c->free_count, c->free_rate, c->total_objs, s->name);
 
 	c->prev_alloc[i] = c->alloc_count;
 	c->prev_free[i] = c->free_count;
@@ -2778,6 +2766,19 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	c->alloc_count = 0;
 	c->free_count = 0;
 	c->gp_seq = cur_gp;
+
+	/* Consider free rate. If we are free rate and previous def count */
+	if (c->alloc_rate < c->free_rate)
+		c->alloc_rate = oo_objects(s->oo) / 3;
+
+	/*
+	 * Calculate pre-reap count. Alloc rate is overloaded to use for shadow
+	 * cache size
+	 */
+	if (unlikely(c->alloc_rate > peak)) {
+			c->alloc_rate = peak;
+			/* stat(s, PEAK_OVERFLOW); */
+	}
 }
 
 /*
@@ -3011,6 +3012,7 @@ redo:
 	}
 
 	c->total_objs--;
+	c->alloc_count++;
 
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
@@ -3367,15 +3369,20 @@ static void slab_free_deferred(struct kmem_cache *s,
 		handle_lists(s, c, cur_gp);
 	}
 
+	cache_next = &c->gp_cache[C_NEXT];
+
 	/* Calculate the condition for pre-reaping the cache */
-	pre_reap = pre_reap_calc(s, c);
+	if (likely(c->page == page)) {
+		pre_reap = false;
+	} else if (page->frozen || cache_next->def_count >= c->alloc_rate) {
+		/* || page_to_nid(page) != numa_node_id()) */
+		pre_reap = true;
+	}
 
 	if (pre_reap) {
 		stat(s, FREE_SLOWPATH);
 		cache_next = &page->gp_cache[C_NEXT];
 		slab_lock(page);
-	} else {
-		cache_next = &c->gp_cache[C_NEXT];
 	}
 
 	if (unlikely(!cache_next->gp_seq)) {
@@ -3431,6 +3438,54 @@ void kmem_cache_free_deferred(struct kmem_cache *s, void *x,
 	trace_kmem_cache_free(_RET_IP_, x);
 }
 EXPORT_SYMBOL(kmem_cache_free_deferred);
+
+static void slab_reclaim(struct kmem_cache *s, unsigned long all)
+{
+	int cpu, node;
+	struct kmem_cache_cpu *c;
+	struct page *page, *page2;
+	struct kmem_cache_node *n;
+
+	for_each_online_cpu(cpu) {
+		c = per_cpu_ptr(s->cpu_slab, cpu);
+
+		handle_lists(s, c, get_state_rcu_gpnum());
+
+		if (all) {
+			void *freelist;
+			void **object;
+
+			freelist = c->freelist;
+
+			while (freelist) {
+				object = freelist;
+				page = virt_to_head_page(object);
+				void *next_object = get_freepointer_safe(s, object);
+
+				if (page == c->page) {
+					freelist = next_object;
+					continue;
+				}
+				__slab_free(s, page, object, NULL, 1, _RET_IP_);
+				c->total_objs--;
+
+				freelist = next_object;
+				if (need_resched())
+					cond_resched();
+			}
+		}
+	}
+
+	for_each_kmem_cache_node(s, node, n) {
+		spin_lock(&n->list_lock);
+		list_for_each_entry_safe(page, page2, &n->partial, lru) {
+			handle_page_lists(s, page);
+		}
+		spin_unlock(&n->list_lock);
+		if (need_resched())
+			cond_resched();
+	}
+}
 
 /*
  * This function progressively scans the array with free objects (with
@@ -5363,6 +5418,18 @@ static ssize_t partial_show(struct kmem_cache *s, char *buf)
 }
 SLAB_ATTR_RO(partial);
 
+static ssize_t empty_slab_store(struct kmem_cache *s, char *buf)
+{
+	unsigned long all;
+	int err;
+
+	err = kstrtoul(buf, 10, &all);
+	if (err)
+		return err;
+
+	slab_reclaim(s, all);
+}
+
 static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 {
 	int empty_slabs = 0;
@@ -5390,6 +5457,9 @@ static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 			struct gp_cache_data *cache_next = &page->gp_cache[C_NEXT],
 								 *cache_wait = &page->gp_cache[C_WAIT];
 
+			trace_page_obj_stat(n, page->inuse, cache_wait->def_count,
+					cache_next->def_count, page->objects, s->name);
+
 			if (!page->inuse || page->inuse == (cache_next->def_count +
 					cache_wait->def_count))
 				empty_slabs++;
@@ -5398,7 +5468,7 @@ static ssize_t empty_slab_show(struct kmem_cache *s, char *buf)
 
 	return sprintf(buf, "%d", empty_slabs);
 }
-SLAB_ATTR_RO(empty_slab);
+SLAB_ATTR(empty_slab);
 
 static ssize_t cpu_slabs_show(struct kmem_cache *s, char *buf)
 {
