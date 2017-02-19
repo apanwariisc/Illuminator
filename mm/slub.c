@@ -2939,10 +2939,15 @@ static short process_idle(struct kmem_cache *s)
 	void *object, *prev = NULL, *nextfree;
 	struct kmem_cache_cpu *c;
 	unsigned long cur_gp = get_state_rcu_gpnum();
-	int limit = 20;
+	int limit = 20, cpu = smp_processor_id();
 	int obj_limit = oo_objects(s->oo);
+	struct kmem_cache_node *n = NULL;
+	struct page *page = NULL, *page2;
 
 	c = this_cpu_ptr(s->cpu_slab);
+
+	if (unlikely(cpu && !(cpu % 15)))
+		n = get_node(s, cpupid_to_nid(cpu));
 
 	if (cur_gp != c->gp_seq) {
 		calculate_avg(s, c, cur_gp);
@@ -2955,7 +2960,7 @@ static short process_idle(struct kmem_cache *s)
 
 	if (!c->freelist || !c->need_work) {
 		c->need_work = false;
-		return 2;
+		goto page_process;
 	} else {
 		object = c->freelist;
 	}
@@ -2973,7 +2978,7 @@ static short process_idle(struct kmem_cache *s)
 		if (c->total_objs < c->alloc_rate) {
 			/* Reclaim not required */
 			c->need_work = false;
-			return 2;
+			goto page_process;
 		} else {
 			obj_limit = c->alloc_rate + limit;
 		}
@@ -2983,7 +2988,6 @@ static short process_idle(struct kmem_cache *s)
 
 	/* Do Cache reaping */
 	while (c->total_objs > obj_limit && limit) {
-		struct page *page;
 
 		nextfree = get_freepointer(s, object);
 		prefetch_freepointer(s, nextfree);
@@ -3002,8 +3006,6 @@ static short process_idle(struct kmem_cache *s)
 			continue;
 		}
 #endif
-
-		stat(s, ALLOC_FAST_PATH_RCU);
 
 		if (prev)
 			set_freepointer(s, prev, nextfree);
@@ -3025,8 +3027,39 @@ static short process_idle(struct kmem_cache *s)
 	if (limit)
 		c->need_work = false;
 
+page_process:
+
 	if (need_resched())
 		return 1;
+
+	if (!n || !n->nr_partial)
+		return 0;
+
+	spin_lock(&n->list_lock);
+	list_for_each_entry_safe(page, page2, &n->partial, lru) {
+		struct gp_cache_data *cache_next = &page->gp_cache[C_NEXT];
+		struct gp_cache_data *cache_wait = &page->gp_cache[C_WAIT];
+
+		if (n->nr_partial >= s->min_partial &&
+				(cache_next->def_count + cache_wait->def_count) == page->inuse) {
+			stat_count(s, FREE_SLOWPATH,
+					(unsigned)(cache_wait->def_count + cache_next->def_count));
+			remove_partial(n, page);
+			stat(s, FREE_REMOVE_PARTIAL);
+
+			stat(s, FREE_SLAB);
+			discard_slab(s, page);
+
+		} else {
+			handle_page_lists(s, page);
+		}
+
+		if (need_resched()) {
+			spin_unlock(&n->list_lock);
+			return 1;
+		}
+	}
+	spin_unlock(&n->list_lock);
 
 	return 0;
 }
