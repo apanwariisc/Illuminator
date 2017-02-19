@@ -364,7 +364,11 @@ static void mqueue_i_callback(struct rcu_head *head)
 
 static void mqueue_destroy_inode(struct inode *inode)
 {
+	kmem_cache_free_deferred(mqueue_inode_cachep, MQUEUE_I(inode),
+			&inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, mqueue_i_callback);
+#endif
 }
 
 static void mqueue_evict_inode(struct inode *inode)

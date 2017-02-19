@@ -259,8 +259,12 @@ static void destroy_inode(struct inode *inode)
 	__destroy_inode(inode);
 	if (inode->i_sb->s_op->destroy_inode)
 		inode->i_sb->s_op->destroy_inode(inode);
-	else
+	else {
+		kmem_cache_free_deferred(inode_cachep, inode, &inode->i_rcu);
+#if 0
 		call_rcu(&inode->i_rcu, i_callback);
+#endif
+	}
 }
 
 /**

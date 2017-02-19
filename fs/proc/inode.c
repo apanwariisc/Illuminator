@@ -80,7 +80,10 @@ static void proc_i_callback(struct rcu_head *head)
 
 static void proc_destroy_inode(struct inode *inode)
 {
+	kmem_cache_free_deferred(proc_inode_cachep, PROC_I(inode), &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, proc_i_callback);
+#endif
 }
 
 static void init_once(void *foo)

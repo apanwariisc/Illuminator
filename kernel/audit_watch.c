@@ -317,6 +317,10 @@ static void audit_update_watch(struct audit_parent *parent,
 
 			audit_watch_log_rule_change(r, owatch, "updated_rules");
 
+			kfree_hint(oentry);
+			kfree_hint(r->fields);
+			kfree_hint(r->filterkey);
+
 			call_rcu(&oentry->rcu, audit_free_rule_rcu);
 		}
 
@@ -349,6 +353,9 @@ static void audit_remove_parent_watches(struct audit_parent *parent)
 			list_del(&r->rlist);
 			list_del(&r->list);
 			list_del_rcu(&e->list);
+			kfree_hint(e);
+			kfree_hint(r->fields);
+			kfree_hint(r->filterkey);
 			call_rcu(&e->rcu, audit_free_rule_rcu);
 		}
 		audit_remove_watch(w);

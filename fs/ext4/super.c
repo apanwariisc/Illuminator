@@ -978,7 +978,10 @@ static void ext4_destroy_inode(struct inode *inode)
 				true);
 		dump_stack();
 	}
+	kmem_cache_free_deferred(ext4_inode_cachep, EXT4_I(inode), &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, ext4_i_callback);
+#endif
 }
 
 static void init_once(void *foo)

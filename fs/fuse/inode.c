@@ -118,7 +118,10 @@ static void fuse_destroy_inode(struct inode *inode)
 	BUG_ON(!list_empty(&fi->write_files));
 	BUG_ON(!list_empty(&fi->queued_writes));
 	kfree(fi->forget);
+	kmem_cache_free_deferred(fuse_inode_cachep, inode, &inode->i_rcu);
+#if 0
 	call_rcu(&inode->i_rcu, fuse_i_callback);
+#endif
 }
 
 static void fuse_evict_inode(struct inode *inode)

@@ -603,7 +603,10 @@ static void blk_release_queue(struct kobject *kobj)
 		bioset_free(q->bio_split);
 
 	ida_simple_remove(&blk_queue_ida, q->id);
+	kmem_cache_free_deferred(blk_requestq_cachep, q, &q->rcu_head);
+#if 0
 	call_rcu(&q->rcu_head, blk_free_queue_rcu);
+#endif
 }
 
 static const struct sysfs_ops queue_sysfs_ops = {

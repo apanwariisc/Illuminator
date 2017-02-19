@@ -304,8 +304,15 @@ static void dentry_free(struct dentry *dentry)
 	/* if dentry was never visible to RCU, immediate free is OK */
 	if (!(dentry->d_flags & DCACHE_RCUACCESS))
 		__d_free(&dentry->d_u.d_rcu);
-	else
+	else {
+		if (dname_external(dentry))
+			call_rcu(&dentry->d_u.d_rcu, __d_free);
+		else
+			kmem_cache_free_deferred(dentry_cache, dentry, &dentry->d_u.d_rcu);
+#if 0
 		call_rcu(&dentry->d_u.d_rcu, __d_free);
+#endif
+	}
 }
 
 /**

@@ -131,7 +131,10 @@ xfs_inode_free(
 	ASSERT(!xfs_isiflocked(ip));
 	XFS_STATS_DEC(ip->i_mount, vn_active);
 
+	kmem_zone_free_deferred(xfs_inode_zone, ip, &VFS_I(ip)->i_rcu);
+#if 0
 	call_rcu(&VFS_I(ip)->i_rcu, xfs_inode_free_callback);
+#endif
 }
 
 /*
