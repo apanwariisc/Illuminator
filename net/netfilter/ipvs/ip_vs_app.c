@@ -142,7 +142,11 @@ ip_vs_app_inc_release(struct netns_ipvs *ipvs, struct ip_vs_app *inc)
 
 	list_del(&inc->a_list);
 
+	kfree_deferred(inc->timeout_table, NULL);
+	kfree_deferred(inc, NULL);
+#if 0
 	call_rcu(&inc->rcu_head, ip_vs_app_inc_rcu_free);
+#endif
 }
 
 

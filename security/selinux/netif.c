@@ -158,7 +158,7 @@ static int sel_netif_sid_slow(struct net *ns, int ifindex, u32 *sid)
 		ret = 0;
 		goto out;
 	}
-	new = kzalloc(sizeof(*new), GFP_ATOMIC);
+	new = kzalloc_def(sizeof(*new), GFP_ATOMIC);
 	if (new == NULL) {
 		ret = -ENOMEM;
 		goto out;

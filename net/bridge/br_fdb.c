@@ -156,7 +156,7 @@ static void fdb_delete(struct net_bridge *br, struct net_bridge_fdb_entry *f)
 
 	hlist_del_rcu(&f->hlist);
 	fdb_notify(br, f, RTM_DELNEIGH);
-	call_rcu(&f->rcu, fdb_rcu_free);
+	kmem_cache_free(br_fdb_cache, f);
 }
 
 /* Delete a local entry if no other port had the same address. */

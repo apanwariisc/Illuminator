@@ -1033,7 +1033,8 @@ static void put_ctx(struct perf_event_context *ctx)
 			put_ctx(ctx->parent_ctx);
 		if (ctx->task && ctx->task != TASK_TOMBSTONE)
 			put_task_struct(ctx->task);
-		call_rcu(&ctx->rcu_head, free_ctx);
+		kfree_deferred(ctx->task_ctx_data, NULL);
+		kfree_deferred(ctx, NULL);
 	}
 }
 

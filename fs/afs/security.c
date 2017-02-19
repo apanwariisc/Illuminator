@@ -71,7 +71,7 @@ static void afs_dispose_of_permits(struct rcu_head *rcu)
 
 	_enter("{%d}", permits->count);
 
-	kfree(permits);
+	kfree_deferred(permits, NULL);
 }
 
 /*
@@ -200,8 +200,12 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key, long acl_order)
 	permits->count = count + 1;
 
 	rcu_assign_pointer(auth_vnode->permits, permits);
-	if (xpermits)
+	if (xpermits) {
+		afs_dispose_of_permits(&xpermits->rcu);
+#if 0
 		call_rcu(&xpermits->rcu, afs_dispose_of_permits);
+#endif
+	}
 
 out_unlock:
 	mutex_unlock(&auth_vnode->permits_lock);

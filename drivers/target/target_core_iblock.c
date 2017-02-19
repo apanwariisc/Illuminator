@@ -193,7 +193,10 @@ static void iblock_free_device(struct se_device *dev)
 	if (ib_dev->ibd_bio_set != NULL)
 		bioset_free(ib_dev->ibd_bio_set);
 
+	kfree_deferred(ib_dev, NULL);
+#if 0
 	call_rcu(&dev->rcu_head, iblock_dev_call_rcu);
+#endif
 }
 
 static unsigned long long iblock_emulate_read_cap_with_block_size(

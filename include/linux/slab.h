@@ -645,6 +645,11 @@ static inline void *kzalloc(size_t size, gfp_t flags)
 	return kmalloc(size, flags | __GFP_ZERO);
 }
 
+static inline void *kzalloc_def(size_t size, gfp_t flags)
+{
+	return kmalloc_def(size, flags | __GFP_ZERO);
+}
+
 /**
  * kzalloc_node - allocate zeroed memory from a particular memory node.
  * @size: how many bytes of memory are required.

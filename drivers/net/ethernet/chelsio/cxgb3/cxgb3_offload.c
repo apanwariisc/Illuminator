@@ -1322,7 +1322,11 @@ void cxgb3_offload_deactivate(struct adapter *adapter)
 	d = L2DATA(tdev);
 	rcu_read_unlock();
 	RCU_INIT_POINTER(tdev->l2opt, NULL);
-	call_rcu(&d->rcu_head, clean_l2_data);
+	if (is_addr_vmalloc(d)) {
+		call_rcu(&d->rcu_head, clean_l2_data);
+	} else {
+		kfree_deferred(d, NULL);
+	}
 	if (t->nofail_skb)
 		kfree_skb(t->nofail_skb);
 	kfree(t);

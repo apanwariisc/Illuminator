@@ -180,7 +180,7 @@ static void ext2_i_callback(struct rcu_head *head)
 
 static void ext2_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, ext2_i_callback);
+	kmem_cache_free_deferred(ext2_inode_cachep, EXT2_I(inode), NULL);
 }
 
 static void init_once(void *foo)

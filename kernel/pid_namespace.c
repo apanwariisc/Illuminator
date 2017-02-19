@@ -145,7 +145,7 @@ static void destroy_pid_namespace(struct pid_namespace *ns)
 
 	ns_free_inum(&ns->ns);
 	for (i = 0; i < PIDMAP_ENTRIES; i++)
-		kfree(ns->pidmap[i].page);
+		kfree_deferred(ns->pidmap[i].page, NULL);
 	put_user_ns(ns->user_ns);
 
 	kmem_cache_free_deferred(pid_ns_cachep, ns, &ns->rcu);

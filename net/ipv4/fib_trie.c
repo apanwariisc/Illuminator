@@ -148,6 +148,7 @@ struct trie {
 #endif
 };
 
+int is_addr_vmalloc(const void *addr);
 static struct key_vector *resize(struct trie *t, struct key_vector *tn);
 static size_t tnode_free_size;
 
@@ -296,7 +297,22 @@ static void __node_free_rcu(struct rcu_head *head)
 		kvfree(n);
 }
 
-#define node_free(n) call_rcu(&tn_info(n)->rcu, __node_free_rcu)
+static void node_def_free(struct rcu_head *head)
+{
+	struct tnode *n = container_of(head, struct tnode, rcu);
+
+	if (!n->tn_bits) {
+		kmem_cache_free_deferred(trie_leaf_kmem, n, NULL);
+	}
+	else if (is_addr_vmalloc(n)) {
+		call_rcu(&tn_info(n)->rcu, __node_free_rcu);
+	} else {
+		kfree_deferred(n, NULL);
+	}
+}
+
+#define node_free(n) node_def_free(&tn_info(n)->rcu)
+/* #define node_free(n) call_rcu(&tn_info(n)->rcu, __node_free_rcu) */
 
 static struct tnode *tnode_alloc(int bits)
 {
@@ -1893,7 +1909,11 @@ static void __trie_free_rcu(struct rcu_head *head)
 
 void fib_free_table(struct fib_table *tb)
 {
+#ifdef CONFIG_IP_FIB_TRIE_STATS
 	call_rcu(&tb->rcu, __trie_free_rcu);
+#else
+	kfree_deferred(tb, NULL);
+#endif
 }
 
 static int fn_trie_dump_leaf(struct key_vector *l, struct fib_table *tb,

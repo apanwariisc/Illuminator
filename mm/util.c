@@ -322,6 +322,14 @@ unsigned long vm_mmap(struct file *file, unsigned long addr,
 }
 EXPORT_SYMBOL(vm_mmap);
 
+int is_addr_vmalloc(const void *addr)
+{
+	if (is_vmalloc_addr(addr))
+		return 1;
+	return 0;
+}
+EXPORT_SYMBOL(is_addr_vmalloc);
+
 void kvfree(const void *addr)
 {
 	if (is_vmalloc_addr(addr))

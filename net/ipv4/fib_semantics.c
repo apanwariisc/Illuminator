@@ -216,7 +216,7 @@ static void free_fib_info_rcu(struct rcu_head *head)
 
 	if (fi->fib_metrics != (u32 *) dst_default_metrics)
 		kfree(fi->fib_metrics);
-	kfree_unhint(fi);
+	kfree(fi);
 }
 
 void free_fib_info(struct fib_info *fi)

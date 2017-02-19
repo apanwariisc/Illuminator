@@ -3318,7 +3318,7 @@ void cc_state_reclaim(struct rcu_head *rcu)
 {
 	struct cc_state *cc_state = container_of(rcu, struct cc_state, rcu);
 
-	kfree(cc_state);
+	kfree_deferred(cc_state, NULL);
 }
 
 static int __subn_set_opa_cc_table(struct opa_smp *smp, u32 am, u8 *data,
@@ -3390,7 +3390,10 @@ static int __subn_set_opa_cc_table(struct opa_smp *smp, u32 am, u8 *data,
 
 	spin_unlock(&ppd->cc_state_lock);
 
+	cc_state_reclaim(&old_cc_state->rcu);
+#if 0
 	call_rcu(&old_cc_state->rcu, cc_state_reclaim);
+#endif
 
 getit:
 	return __subn_get_opa_cc_table(smp, am, data, ibdev, port, resp_len);

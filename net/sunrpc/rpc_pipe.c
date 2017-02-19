@@ -211,7 +211,7 @@ rpc_i_callback(struct rcu_head *head)
 static void
 rpc_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, rpc_i_callback);
+	kmem_cache_free_deferred(rpc_inode_cachep, RPC_I(inode), NULL);
 }
 
 static int

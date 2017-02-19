@@ -9159,7 +9159,7 @@ void btrfs_destroy_inode(struct inode *inode)
 	inode_tree_del(inode);
 	btrfs_drop_extent_cache(inode, 0, (u64)-1, 0);
 free:
-	call_rcu(&inode->i_rcu, btrfs_i_callback);
+	kmem_cache_free_deferred(btrfs_inode_cachep, BTRFS_I(inode), NULL);
 }
 
 int btrfs_drop_inode(struct inode *inode)

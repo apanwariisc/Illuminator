@@ -817,8 +817,8 @@ static void sdma_map_free(struct sdma_vl_map *m)
 	int i;
 
 	for (i = 0; m && i < m->actual_vls; i++)
-		kfree(m->map[i]);
-	kfree(m);
+		kfree_deferred(m->map[i], NULL);
+	kfree_deferred(m, NULL);
 }
 
 /*
@@ -929,8 +929,12 @@ int sdma_map_init(struct hfi1_devdata *dd, u8 port, u8 num_vls, u8 *vl_engines)
 
 	spin_unlock_irq(&dd->sde_map_lock);
 	/* success, free any old map after grace period */
-	if (oldmap)
+	if (oldmap) {
+		sdma_map_rcu_callback(&oldmap->list);
+#if 0
 		call_rcu(&oldmap->list, sdma_map_rcu_callback);
+#endif
+	}
 	return 0;
 bail:
 	/* free any partial allocation */

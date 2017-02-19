@@ -227,7 +227,7 @@ static int inode_alloc_security(struct inode *inode)
 	struct inode_security_struct *isec;
 	u32 sid = current_sid();
 
-	isec = kmem_cache_zalloc(sel_inode_cache, GFP_NOFS);
+	isec = kmem_cache_zalloc_def(sel_inode_cache, GFP_NOFS);
 	if (!isec)
 		return -ENOMEM;
 
@@ -346,7 +346,10 @@ static void inode_free_security(struct inode *inode)
 	 * leave the current inode->i_security pointer intact.
 	 * The inode will be freed after the RCU grace period too.
 	 */
+	kmem_cache_free_deferred(sel_inode_cache, isec, NULL);
+#if 0
 	call_rcu(&isec->rcu, inode_free_rcu);
+#endif
 }
 
 static int file_alloc_security(struct file *file)

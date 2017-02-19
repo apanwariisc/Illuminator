@@ -750,8 +750,8 @@ static void vxlan_fdb_free(struct rcu_head *head)
 	struct vxlan_rdst *rd, *nd;
 
 	list_for_each_entry_safe(rd, nd, &f->remotes, list)
-		kfree(rd);
-	kfree(f);
+		kfree_deferred(rd, NULL);
+	kfree_deferred(f, NULL);
 }
 
 static void vxlan_fdb_destroy(struct vxlan_dev *vxlan, struct vxlan_fdb *f)
@@ -763,7 +763,10 @@ static void vxlan_fdb_destroy(struct vxlan_dev *vxlan, struct vxlan_fdb *f)
 	vxlan_fdb_notify(vxlan, f, first_remote_rtnl(f), RTM_DELNEIGH);
 
 	hlist_del_rcu(&f->hlist);
+	vxlan_fdb_free(&f->rcu);
+#if 0
 	call_rcu(&f->rcu, vxlan_fdb_free);
+#endif
 }
 
 static int vxlan_fdb_parse(struct nlattr *tb[], struct vxlan_dev *vxlan,

@@ -1269,8 +1269,12 @@ static void cleanup_device_data(struct hfi1_devdata *dd)
 		rcu_assign_pointer(ppd->cc_state, NULL);
 		spin_unlock(&ppd->cc_state_lock);
 
-		if (cc_state)
+		if (cc_state) {
+			cc_state_reclaim(&cc_state->rcu);
+#if 0
 			call_rcu(&cc_state->rcu, cc_state_reclaim);
+#endif
+		}
 	}
 
 	free_credit_return(dd);
