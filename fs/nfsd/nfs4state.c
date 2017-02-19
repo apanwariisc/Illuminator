@@ -284,7 +284,7 @@ put_nfs4_file(struct nfs4_file *fi)
 		spin_unlock(&state_lock);
 		WARN_ON_ONCE(!list_empty(&fi->fi_clnt_odstate));
 		WARN_ON_ONCE(!list_empty(&fi->fi_delegations));
-		call_rcu(&fi->fi_rcu, nfsd4_free_file_rcu);
+		kmem_cache_free_deferred(file_slab, fi, NULL);
 	}
 }
 

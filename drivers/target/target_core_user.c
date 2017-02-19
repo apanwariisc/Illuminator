@@ -984,7 +984,7 @@ static void tcmu_free_device(struct se_device *dev)
 		kfree(udev->uio_info.name);
 		kfree(udev->name);
 	}
-	call_rcu(&dev->rcu_head, tcmu_dev_call_rcu);
+	kfree_deferred(udev, NULL);
 }
 
 enum {

@@ -288,8 +288,12 @@ void udp_del_offload(struct udp_offload *uo)
 	pr_warn("udp_del_offload: didn't find offload for port %d\n", ntohs(uo->port));
 unlock:
 	spin_unlock(&udp_offload_lock);
-	if (uo_priv)
+	if (uo_priv) {
+		kfree_deferred(uo_priv, NULL);
+#if 0
 		call_rcu(&uo_priv->rcu, udp_offload_free_routine);
+#endif
+	}
 }
 EXPORT_SYMBOL(udp_del_offload);
 

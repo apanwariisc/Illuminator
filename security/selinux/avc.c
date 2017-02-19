@@ -281,12 +281,12 @@ static void avc_xperms_decision_free(struct avc_xperms_decision_node *xpd_node)
 
 	xpd = &xpd_node->xpd;
 	if (xpd->allowed)
-		kmem_cache_free(avc_xperms_data_cachep, xpd->allowed);
+		kmem_cache_free_deferred(avc_xperms_data_cachep, xpd->allowed, NULL);
 	if (xpd->auditallow)
-		kmem_cache_free(avc_xperms_data_cachep, xpd->auditallow);
+		kmem_cache_free_deferred(avc_xperms_data_cachep, xpd->auditallow, NULL);
 	if (xpd->dontaudit)
-		kmem_cache_free(avc_xperms_data_cachep, xpd->dontaudit);
-	kmem_cache_free(avc_xperms_decision_cachep, xpd_node);
+		kmem_cache_free_deferred(avc_xperms_data_cachep, xpd->dontaudit, NULL);
+	kmem_cache_free_deferred(avc_xperms_decision_cachep, xpd_node, NULL);
 }
 
 static void avc_xperms_free(struct avc_xperms_node *xp_node)
@@ -300,7 +300,7 @@ static void avc_xperms_free(struct avc_xperms_node *xp_node)
 		list_del(&xpd_node->xpd_list);
 		avc_xperms_decision_free(xpd_node);
 	}
-	kmem_cache_free(avc_xperms_cachep, xp_node);
+	kmem_cache_free_deferred(avc_xperms_cachep, xp_node, NULL);
 }
 
 static void avc_copy_xperms_decision(struct extended_perms_decision *dest,
@@ -486,14 +486,14 @@ static void avc_node_free(struct rcu_head *rhead)
 {
 	struct avc_node *node = container_of(rhead, struct avc_node, rhead);
 	avc_xperms_free(node->ae.xp_node);
-	kmem_cache_free(avc_node_cachep, node);
+	kmem_cache_free_deferred(avc_node_cachep, node, NULL);
 	avc_cache_stats_incr(frees);
 }
 
 static void avc_node_delete(struct avc_node *node)
 {
 	hlist_del_rcu(&node->list);
-	call_rcu(&node->rhead, avc_node_free);
+	avc_node_free(&node->rhead);
 	atomic_dec(&avc_cache.active_nodes);
 }
 
@@ -508,7 +508,11 @@ static void avc_node_kill(struct avc_node *node)
 static void avc_node_replace(struct avc_node *new, struct avc_node *old)
 {
 	hlist_replace_rcu(&old->list, &new->list);
+	kmem_cache_free_deferred(avc_node_cachep, old, NULL);
+	avc_cache_stats_incr(frees);
+#if 0
 	call_rcu(&old->rhead, avc_node_free);
+#endif
 	atomic_dec(&avc_cache.active_nodes);
 }
 
@@ -550,7 +554,7 @@ static struct avc_node *avc_alloc_node(void)
 {
 	struct avc_node *node;
 
-	node = kmem_cache_zalloc(avc_node_cachep, GFP_ATOMIC|__GFP_NOMEMALLOC);
+	node = kmem_cache_zalloc_def(avc_node_cachep, GFP_ATOMIC|__GFP_NOMEMALLOC);
 	if (!node)
 		goto out;
 

@@ -609,7 +609,7 @@ static void reiserfs_i_callback(struct rcu_head *head)
 
 static void reiserfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, reiserfs_i_callback);
+	kmem_cache_free_deferred(reiserfs_inode_cachep, REISERFS_I(inode), NULL);
 }
 
 static void init_once(void *foo)

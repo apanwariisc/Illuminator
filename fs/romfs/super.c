@@ -407,7 +407,7 @@ static void romfs_i_callback(struct rcu_head *head)
 
 static void romfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, romfs_i_callback);
+	kmem_cache_free_deferred(romfs_inode_cachep, ROMFS_I(inode), NULL);
 }
 
 /*

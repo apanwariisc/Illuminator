@@ -146,7 +146,7 @@ static inline void free_layer(struct idr *idr, struct idr_layer *p)
 {
 	if (idr->hint == p)
 		RCU_INIT_POINTER(idr->hint, NULL);
-	call_rcu(&p->rcu_head, idr_layer_rcu_free);
+	kmem_cache_free_deferred(idr_layer_cache, p, NULL);
 }
 
 /* only called when idp->lock is held */

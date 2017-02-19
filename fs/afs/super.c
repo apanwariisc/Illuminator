@@ -519,7 +519,7 @@ static void afs_destroy_inode(struct inode *inode)
 
 	ASSERTCMP(vnode->server, ==, NULL);
 
-	call_rcu(&inode->i_rcu, afs_i_callback);
+	kmem_cache_free_def(afs_inode_cachep,, vnode);
 	atomic_dec(&afs_count_active_inodes);
 }
 

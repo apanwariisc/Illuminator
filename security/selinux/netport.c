@@ -158,7 +158,7 @@ static int sel_netport_sid_slow(u8 protocol, u16 pnum, u32 *sid)
 		spin_unlock_bh(&sel_netport_lock);
 		return 0;
 	}
-	new = kzalloc(sizeof(*new), GFP_ATOMIC);
+	new = kzalloc_def(sizeof(*new), GFP_ATOMIC);
 	if (new == NULL)
 		goto out;
 	ret = security_port_sid(protocol, pnum, sid);

@@ -42,9 +42,9 @@ static void release_callchain_buffers_rcu(struct rcu_head *head)
 	entries = container_of(head, struct callchain_cpus_entries, rcu_head);
 
 	for_each_possible_cpu(cpu)
-		kfree(entries->cpu_entries[cpu]);
+		kfree_deferred(entries->cpu_entries[cpu], NULL);
 
-	kfree_unhint(entries);
+	kfree_deferred(entries, NULL);
 }
 
 static void release_callchain_buffers(void)
@@ -53,7 +53,7 @@ static void release_callchain_buffers(void)
 
 	entries = callchain_cpus_entries;
 	RCU_INIT_POINTER(callchain_cpus_entries, NULL);
-	call_rcu(&entries->rcu_head, release_callchain_buffers_rcu);
+	release_callchain_buffers_rcu(&entries->rcu_head);
 }
 
 static int alloc_callchain_buffers(void)

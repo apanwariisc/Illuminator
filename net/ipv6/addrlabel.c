@@ -142,8 +142,12 @@ static bool ip6addrlbl_hold(struct ip6addrlbl_entry *p)
 
 static inline void ip6addrlbl_put(struct ip6addrlbl_entry *p)
 {
-	if (atomic_dec_and_test(&p->refcnt))
+	if (atomic_dec_and_test(&p->refcnt)) {
+		kfree_deferred(p, NULL);
+#if 0
 		call_rcu(&p->rcu, ip6addrlbl_free_rcu);
+#endif
+	}
 }
 
 /* Find label */

@@ -3383,6 +3383,14 @@ void *kmem_cache_alloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_trace);
+
+void *kmem_cache_alloc_trace_def(struct kmem_cache *s, gfp_t gfpflags, size_t size)
+{
+	void *ret = slab_alloc_def(s, gfpflags, _RET_IP_);
+	trace_kmalloc(_RET_IP_, ret, size, s->size, gfpflags);
+	return ret;
+}
+EXPORT_SYMBOL(kmem_cache_alloc_trace_def);
 #endif
 
 #ifdef CONFIG_NUMA

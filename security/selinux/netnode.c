@@ -210,7 +210,7 @@ static int sel_netnode_sid_slow(void *addr, u16 family, u32 *sid)
 		spin_unlock_bh(&sel_netnode_lock);
 		return 0;
 	}
-	new = kzalloc(sizeof(*new), GFP_ATOMIC);
+	new = kzalloc_def(sizeof(*new), GFP_ATOMIC);
 	if (new == NULL)
 		goto out;
 	switch (family) {

@@ -1932,7 +1932,7 @@ static void nfs_i_callback(struct rcu_head *head)
 
 void nfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, nfs_i_callback);
+	kmem_cache_free_deferred(nfs_inode_cachep, NFS_I(inode), NULL);
 }
 EXPORT_SYMBOL_GPL(nfs_destroy_inode);
 

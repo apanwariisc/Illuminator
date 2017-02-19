@@ -261,6 +261,7 @@ void free_pid(struct pid *pid)
 	/* We can be called with write_lock_irq(&tasklist_lock) held */
 	int i;
 	unsigned long flags;
+	struct pid_namespace *pns;
 
 	spin_lock_irqsave(&pidmap_lock, flags);
 	for (i = 0; i <= pid->level; i++) {

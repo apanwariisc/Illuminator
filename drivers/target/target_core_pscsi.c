@@ -616,7 +616,10 @@ static void pscsi_free_device(struct se_device *dev)
 
 		pdv->pdv_sd = NULL;
 	}
+	kfree_deferred(pdv, NULL);
+#if 0
 	call_rcu(&dev->rcu_head, pscsi_dev_call_rcu);
+#endif
 }
 
 static void pscsi_transport_complete(struct se_cmd *cmd, struct scatterlist *sg,

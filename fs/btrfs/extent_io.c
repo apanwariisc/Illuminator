@@ -4540,7 +4540,7 @@ out:
 static void __free_extent_buffer(struct extent_buffer *eb)
 {
 	btrfs_leak_debug_del(&eb->leak_list);
-	kmem_cache_free(extent_buffer_cache, eb);
+	kmem_cache_free_deferred(extent_buffer_cache, eb, NULL);
 }
 
 int extent_buffer_under_io(struct extent_buffer *eb)
@@ -5012,7 +5012,7 @@ static int release_extent_buffer(struct extent_buffer *eb)
 			return 1;
 		}
 #endif
-		call_rcu(&eb->rcu_head, btrfs_release_extent_buffer_rcu);
+		btrfs_release_extent_buffer_rcu(&eb->rcu_head);
 		return 1;
 	}
 	spin_unlock(&eb->refs_lock);

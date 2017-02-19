@@ -105,7 +105,9 @@ unx_free_cred_callback(struct rcu_head *head)
 static void
 unx_destroy_cred(struct rpc_cred *cred)
 {
-	call_rcu(&cred->cr_rcu, unx_free_cred_callback);
+	struct unx_cred *unx_cred = container_of(&cred->cr_rcu, struct unx_cred, uc_base.cr_rcu);
+
+	kfree_deferred(unx_cred, NULL);
 }
 
 /*

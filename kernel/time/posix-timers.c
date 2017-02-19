@@ -577,7 +577,7 @@ static void release_posix_timer(struct k_itimer *tmr, int it_id_set)
 	}
 	put_pid(tmr->it_pid);
 	sigqueue_free(tmr->sigq);
-	call_rcu(&tmr->it.rcu, k_itimer_rcu_free);
+	kmem_cache_free_deferred(posix_timers_cache, tmr, NULL);
 }
 
 static struct k_clock *clockid_to_kclock(const clockid_t id)

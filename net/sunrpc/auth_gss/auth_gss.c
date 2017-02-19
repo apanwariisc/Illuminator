@@ -1281,7 +1281,10 @@ gss_destroy_nullcred(struct rpc_cred *cred)
 	struct gss_cl_ctx *ctx = rcu_dereference_protected(gss_cred->gc_ctx, 1);
 
 	RCU_INIT_POINTER(gss_cred->gc_ctx, NULL);
+	kfree_deferred(gss_cred, NULL);
+#if 0
 	call_rcu(&cred->cr_rcu, gss_free_cred_callback);
+#endif
 	if (ctx)
 		gss_put_ctx(ctx);
 	gss_put_auth(gss_auth);

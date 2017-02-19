@@ -114,7 +114,7 @@ static void free_chunk(struct audit_chunk *chunk)
 		if (chunk->owners[i].owner)
 			put_tree(chunk->owners[i].owner);
 	}
-	kfree(chunk);
+	kfree_deferred(chunk, NULL);
 }
 
 void audit_put_chunk(struct audit_chunk *chunk)
@@ -132,7 +132,7 @@ static void __put_chunk(struct rcu_head *rcu)
 static void audit_tree_destroy_watch(struct fsnotify_mark *entry)
 {
 	struct audit_chunk *chunk = container_of(entry, struct audit_chunk, mark);
-	call_rcu(&chunk->head, __put_chunk);
+	__put_chunk(&chunk->head);
 }
 
 static struct audit_chunk *alloc_chunk(int count)

@@ -355,7 +355,7 @@ static void rd_free_device(struct se_device *dev)
 	struct rd_dev *rd_dev = RD_DEV(dev);
 
 	rd_release_device_space(rd_dev);
-	call_rcu(&dev->rcu_head, rd_dev_call_rcu);
+	kfree_deferred(rd_dev, NULL);
 }
 
 static struct rd_dev_sg_table *rd_get_sg_table(struct rd_dev *rd_dev, u32 page)

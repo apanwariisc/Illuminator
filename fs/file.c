@@ -29,6 +29,7 @@ int sysctl_nr_open_min = BITS_PER_LONG;
 #define __const_min(x, y) ((x) < (y) ? (x) : (y))
 int sysctl_nr_open_max = __const_min(INT_MAX, ~(size_t)0/sizeof(void *)) &
 			 -BITS_PER_LONG;
+int is_addr_vmalloc(const void *addr);
 
 static void *alloc_fdmem(size_t size)
 {
@@ -193,8 +194,16 @@ static int expand_fdtable(struct files_struct *files, int nr)
 	BUG_ON(nr < cur_fdt->max_fds);
 	copy_fdtable(new_fdt, cur_fdt);
 	rcu_assign_pointer(files->fdt, new_fdt);
-	if (cur_fdt != &files->fdtab)
-		call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
+	if (cur_fdt != &files->fdtab) {
+		if (is_addr_vmalloc(cur_fdt->fd) ||
+				is_addr_vmalloc(cur_fdt->open_fds)) {
+			call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
+		} else {
+			kfree_deferred(cur_fdt->fd, NULL);
+			kfree_deferred(cur_fdt->open_fds, NULL);
+			kfree_deferred(cur_fdt, NULL);
+		}
+	}
 	/* coupled with smp_rmb() in __fd_install() */
 	smp_wmb();
 	return 1;

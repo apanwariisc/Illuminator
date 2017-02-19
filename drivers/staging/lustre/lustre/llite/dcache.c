@@ -52,7 +52,7 @@ static void free_dentry_data(struct rcu_head *head)
 	struct ll_dentry_data *lld;
 
 	lld = container_of(head, struct ll_dentry_data, lld_rcu_head);
-	kfree(lld);
+	kfree_deferred(lld, NULL);
 }
 
 /* should NOT be called with the dcache lock, see fs/dcache.c */
@@ -71,7 +71,10 @@ static void ll_release(struct dentry *de)
 	}
 
 	de->d_fsdata = NULL;
+	free_dentry_data(&lld->lld_rcu_head);
+#if 0
 	call_rcu(&lld->lld_rcu_head, free_dentry_data);
+#endif
 }
 
 /* Compare if two dentries are the same.  Don't match if the existing dentry
