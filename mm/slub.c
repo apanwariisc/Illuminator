@@ -2749,9 +2749,6 @@ static void handle_page_lists(struct kmem_cache *s, struct page *page)
 void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 		unsigned long cur_gp)
 {
-	c->gp_seq = cur_gp;
-	return;
-#if 0
 	unsigned short i = cur_gp % 3;
 	int peak = oo_objects(s->oo) * 4;
 
@@ -2799,18 +2796,10 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	c->free_count = 0;
 	c->gp_seq = cur_gp;
 
+#if 0
 	/* Consider free rate. If we are free rate and previous def count */
-	if (c->alloc_rate < c->free_rate)
-		c->alloc_rate = oo_objects(s->oo) / 3;
-
-	/*
-	 * Calculate pre-reap count. Alloc rate is overloaded to use for shadow
-	 * cache size
-	 */
-	if (unlikely(c->alloc_rate > peak)) {
-			c->alloc_rate = peak;
-			/* stat(s, PEAK_OVERFLOW); */
-	}
+	if (c->alloc_rate < (oo_objects(s->oo) / 2))
+		c->alloc_rate = oo_objects(s->oo) / 2;
 #endif
 }
 
@@ -3045,7 +3034,7 @@ redo:
 	}
 
 	c->total_objs--;
-	/* c->alloc_count++; */
+	c->alloc_count++;
 
 	if (unlikely(gfpflags & __GFP_ZERO) && object)
 		memset(object, 0, s->object_size);
@@ -3058,7 +3047,7 @@ redo:
 static __always_inline void *slab_alloc_node_def(struct kmem_cache *s,
 		gfp_t gfpflags, int node, unsigned long addr)
 {
-	void **object;
+	void **object, *next_object;
 	struct kmem_cache_cpu *c;
 	unsigned long tid;
 	unsigned long cur_gp = get_state_rcu_gpnum();
@@ -3074,20 +3063,28 @@ redo:
 	tid = c->tid;
 	preempt_enable();
 
-	if (unlikely(cur_gp != c->gp_seq)) {
-		calculate_avg(s, c, cur_gp);
-		/* Handle list move operations depending on the grace period */
-		handle_lists(s, c, cur_gp);
-	}
-
 	object = c->freelist;
 	if (unlikely(!object)) {
 		VM_BUG_ON(c->total_objs);
+
+		stat(s, ALLOC_SLOWPATH);
+
+		if (unlikely(cur_gp != c->gp_seq)) {
+			calculate_avg(s, c, cur_gp);
+			/* Handle list move operations depending on the grace period */
+			handle_lists(s, c, cur_gp);
+		}
+
+		object = c->freelist;
+		if (object)
+			goto b1;
+
 		/* Fliping and merging can be considered based on alloc rate*/
 		object = __slab_alloc(s, gfpflags, node, addr, c);
-		stat(s, ALLOC_SLOWPATH);
 	} else {
-		void *next_object = get_freepointer_safe(s, object);
+		stat(s, ALLOC_FASTPATH);
+b1:
+		next_object = get_freepointer_safe(s, object);
 
 		if (unlikely(!this_cpu_cmpxchg_double(
 				s->cpu_slab->freelist, s->cpu_slab->tid,
@@ -3098,11 +3095,10 @@ redo:
 			goto redo;
 		}
 		prefetch_freepointer(s, next_object);
-		stat(s, ALLOC_FASTPATH);
 	}
 
 	c->total_objs--;
-	/* c->alloc_count++; */
+	c->alloc_count++;
 
 	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
 			c->alloc_count, "alloc", s->name);
@@ -3381,7 +3377,7 @@ redo:
 		__slab_free(s, page, head, tail_obj, cnt, addr);
 	}
 
-	/* c->free_count++; */
+	c->free_count++;
 }
 
 static void inline pre_reap_page(struct kmem_cache *s,
@@ -3395,7 +3391,7 @@ static void inline pre_reap_page(struct kmem_cache *s,
 
 	cache_next = &page->gp_cache[C_NEXT];
 
-	if (cur_gp != cache_next->gp_seq)
+	if (unlikely(cur_gp != cache_next->gp_seq))
 		handle_page_lists(s, page);
 
 	do {
@@ -3409,7 +3405,7 @@ static void inline pre_reap_page(struct kmem_cache *s,
 				prior, count,
 				object, new_count));
 
-	if (count == 0) {
+	if (unlikely(count == 0)) {
 		slab_lock(page);
 		VM_BUG_ON(cache_next->freelist);
 		cache_next->gp_seq = cur_gp + 1;
@@ -3428,34 +3424,28 @@ static void slab_free_deferred(struct kmem_cache *s,
 	void **object = (void *)x;
 	struct gp_cache_data *cache_next;
 	unsigned long cur_gp = get_state_rcu_gpnum();
-	bool pre_reap = false;
 
-	c = __this_cpu_ptr(s->cpu_slab);
-
-	if (cur_gp != c->gp_seq) {
-		calculate_avg(s, c, cur_gp);
-		/* Handle list move operations depending on the grace period */
-		handle_lists(s, c, cur_gp);
-	}
-
-	cache_next = &c->gp_cache[C_NEXT];
-
-	/* Calculate the condition for pre-reaping the cache */
-	if (likely(c->page == page)) {
-		pre_reap = false;
-	} else if (cache_next->def_count > oo_objects(s->oo) ||
-			c->total_objs > oo_objects(s->oo) ||
-			page_to_nid(page) != numa_node_id()) {
-		pre_reap = true;
-	}
-
-	if (pre_reap) {
+	if (page_to_nid(page) != numa_node_id()) {
 		pre_reap_page(s, page, x);
 	} else {
+		struct kmem_cache_cpu *c;
+		void **object = (void *)x;
+		struct gp_cache_data *cache_next;
+		unsigned long cur_gp = get_state_rcu_gpnum();
+
 		/* FIXME: If an interrupt occurs at this place and performs a
 		 * a slab_free_def on the same slab, then there is a possibility
 		 * of corruption
 		 */
+		c = this_cpu_ptr(s->cpu_slab);
+		cache_next = &c->gp_cache[C_NEXT];
+
+		if (unlikely(cur_gp != c->gp_seq)) {
+			calculate_avg(s, c, cur_gp);
+			/* Handle list move operations depending on the grace period */
+			handle_lists(s, c, cur_gp);
+		}
+
 		set_freepointer(s, object, cache_next->freelist);
 		cache_next->freelist = object;
 		cache_next->def_count++;
@@ -3466,12 +3456,11 @@ static void slab_free_deferred(struct kmem_cache *s,
 			cache_next->last = object;
 		}
 
+		trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
+				c->alloc_count, "free", s->name);
 	}
 
 	stat(s, DEFERRED_FREE);
-
-	trace_def_alloc_free(cur_gp, smp_processor_id(), c->total_objs,
-			c->alloc_count, "free", s->name);
 }
 
 void kmem_cache_free(struct kmem_cache *s, void *x)
