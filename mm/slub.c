@@ -35,8 +35,11 @@
 #include <linux/stacktrace.h>
 #include <linux/prefetch.h>
 #include <linux/memcontrol.h>
+#include <linux/notifier.h>
 
 #include <trace/events/kmem.h>
+
+#include <asm/idle.h>
 
 #include "internal.h"
 
@@ -49,6 +52,12 @@ static void __slab_free(struct kmem_cache *s, struct page *page,
 static void handle_page_lists(struct kmem_cache *s, struct page *page);
 static void *slab_alloc_node_def(struct kmem_cache *s,
 		        gfp_t gfpflags, int node, unsigned long addr);
+static int slub_idle_work(struct notifier_block *nb, unsigned long val,
+		        void *data);
+
+static struct notifier_block slub_idle_work_nb = {
+		    .notifier_call = slub_idle_work,
+};
 
 #define incr_def_count(s, page) update_def_count(s, page, 1);
 #define decr_def_count(s, page) update_def_count(s, page, 0);
@@ -2448,6 +2457,7 @@ static inline void flip_next_wait_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
+		c->need_work = true;
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 	}
 
@@ -2481,6 +2491,7 @@ static inline void merge_to_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_wait->freelist;
 		c->total_objs += cache_wait->def_count;
+		c->need_work = true;
 
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_wait->def_count);
 
@@ -2502,6 +2513,7 @@ static inline void merge_to_current(struct kmem_cache *s,
 		set_freepointer(s, object, c->freelist);
 		c->freelist = cache_next->freelist;
 		c->total_objs += cache_next->def_count;
+		c->need_work = true;
 
 		stat_count(s, FREE_FASTPATH, (unsigned) cache_next->def_count);
 
@@ -2801,6 +2813,147 @@ void calculate_avg(struct kmem_cache *s, struct kmem_cache_cpu *c,
 	if (c->alloc_rate < (oo_objects(s->oo) / 2))
 		c->alloc_rate = oo_objects(s->oo) / 2;
 #endif
+}
+
+/*
+ * Perform processing of deferred objects when the thread has no other
+ * work to do and is about to enter idle state
+ * Returns:
+ *		0: Processed some objects and few objects pending for processing
+ *		1: If reschedule is required
+ *		2: If no work to do
+ */
+static short process_idle(struct kmem_cache *s)
+{
+	void *object, *prev = NULL, *nextfree;
+	struct kmem_cache_cpu *c;
+	unsigned long cur_gp = get_state_rcu_gpnum();
+	int limit = 10;
+	int obj_limit = oo_objects(s->oo);
+	short aggressive_reclaim = 0;
+
+	c = this_cpu_ptr(s->cpu_slab);
+
+	if (cur_gp != c->gp_seq) {
+		calculate_avg(s, c, cur_gp);
+		/* Handle list move operations depending on the grace period */
+		handle_lists(s, c, cur_gp);
+	}
+
+	if (need_resched())
+		return 1;
+
+	if (!c->freelist || !c->need_work) {
+		c->need_work = false;
+		return 2;
+	} else {
+		object = c->freelist;
+	}
+
+	/*
+	 * If allocation rate is very low then we need to aggressively
+	 * reclaim objects in the cache. Else pick the objects so that
+	 * we can avoid movement of pages b/w full and partial lists
+	 *
+	 * aggressive reclaim level: 0 = low, 1 = moderate, 2 = high
+	 */
+	if (c->alloc_rate <= 3) {
+		aggressive_reclaim = 2;
+		obj_limit = 0;
+	} else if (c->alloc_rate < oo_objects(s->oo)) {
+		if (c->total_objs < c->alloc_rate) {
+			/* Reclaim not required */
+			c->need_work = false;
+			return 2;
+		} else {
+			obj_limit = c->alloc_rate + limit;
+			aggressive_reclaim = 1;
+		}
+	} else {
+		obj_limit = c->alloc_rate * 2;
+	}
+
+	/* Do Cache reaping */
+	while (c->total_objs > obj_limit && limit) {
+		struct page *page;
+
+		nextfree = get_freepointer(s, object);
+		prefetch_freepointer(s, nextfree);
+		page = virt_to_head_page(object);
+
+		if ((aggressive_reclaim == 0 &&
+				(c->page == page ||	!atomic_long_read(&page->is_partial))) ||
+				(aggressive_reclaim == 1 && c->page == page)) {
+			prev = object;
+			object = nextfree;
+
+			if (!object)
+				break;
+
+			continue;
+		}
+
+		stat(s, ALLOC_FAST_PATH_RCU);
+
+		if (prev)
+			set_freepointer(s, prev, nextfree);
+		else
+			c->freelist = nextfree;
+
+		__slab_free(s, page, object, NULL, 1, _RET_IP_);
+
+		c->total_objs--;
+		object = nextfree;
+		if (!object)
+			break;
+		limit--;
+	}
+
+	trace_idle_work(c->gp_seq, smp_processor_id(), c->alloc_rate, limit, c->total_objs,
+			s->name);
+
+	if (limit)
+		c->need_work = false;
+
+	if (need_resched())
+		return 1;
+
+	return 0;
+}
+
+static int slub_idle_work(struct notifier_block *nb, unsigned long val,
+		void *data)
+{
+	struct kmem_cache *s;
+
+	if (val == IDLE_END)
+		return 0;
+
+	local_irq_enable();
+
+	s = this_cpu_read(last_processed);
+
+redo:
+	if (unlikely(s == NULL))
+		s = list_first_entry(&slab_def_caches, struct kmem_cache, def_list);
+
+	list_for_each_entry_from(s, &slab_def_caches, def_list) {
+		short rc = process_idle(s);
+		if (rc == 1) {
+			/* Thread needs a reschedule. Need to exit */
+			local_irq_disable();
+			return 0;
+		}
+	}
+
+	if (unlikely(&s->def_list == &slab_def_caches)) {
+		s = NULL;
+	}
+
+	this_cpu_write(last_processed, s);
+
+	local_irq_disable();
+	return 0;
 }
 
 /*
@@ -4700,6 +4853,13 @@ void __init kmem_cache_init(void)
 
 void __init kmem_cache_init_late(void)
 {
+	if (list_empty(&slab_def_caches)) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+
+	/* Register notifier for CPU Idle work */
+	idle_notifier_register(&slub_idle_work_nb);
 }
 
 struct kmem_cache *

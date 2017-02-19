@@ -543,6 +543,40 @@ TRACE_EVENT(page_obj_stat,
 		__entry->objects,
 		__entry->slab)
 );
+
+TRACE_EVENT(idle_work,
+
+	TP_PROTO(unsigned long gp, int cpu, int rate, int limit, int total_objs, const char *slab),
+
+	TP_ARGS(gp, cpu, rate, limit, total_objs, slab),
+
+	TP_STRUCT__entry(
+		__field(        unsigned long, gp              )
+		__field(        int, cpu                )
+		__field(        int, rate   )
+		__field(        int, limit)
+		__field(        int, total_objs)
+		__field(        const char *, slab)
+	),
+
+	TP_fast_assign(
+		__entry->gp = gp;
+		__entry->cpu = cpu;
+		__entry->rate = rate;
+		__entry->limit = limit;
+		__entry->total_objs = total_objs;
+		__entry->slab = slab;
+	),
+
+	TP_printk("gp=%ld cpu=%d alloc_rate=%d limit=%d total_objs=%d slab=%s",
+		__entry->gp,
+		__entry->cpu,
+		__entry->rate,
+		__entry->limit,
+		__entry->total_objs,
+		__entry->slab)
+);
+
 #endif /* _TRACE_KMEM_H */
 
 /* This part must be outside protection */
