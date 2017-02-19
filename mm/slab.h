@@ -56,6 +56,7 @@ enum slab_state {
 };
 
 extern enum slab_state slab_state;
+DECLARE_PER_CPU(struct kmem_cache *, last_processed);
 
 /* The slab cache mutex protects the management structures during changes */
 extern struct mutex slab_mutex;

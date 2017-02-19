@@ -53,6 +53,7 @@ struct kmem_cache_cpu {
 	unsigned long gp_seq;	/* To calc avg alloc rate*/
 	int alloc_rate;
 	int free_rate;
+	bool need_work;
 #ifdef CONFIG_SLUB_STATS
 	unsigned stat[NR_SLUB_STAT_ITEMS];
 #endif
