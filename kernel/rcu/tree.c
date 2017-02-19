@@ -615,7 +615,7 @@ cpu_needs_another_gp(struct rcu_state *rsp, struct rcu_data *rdp)
 		    ULONG_CMP_LT(READ_ONCE(rsp->completed),
 				 rdp->nxtcompleted[i]))
 			return true;  /* Yes, CBs for future grace period. */
-	return false; /* No grace period needed. */
+	return true; /* grace period always needed. */
 }
 
 /*
