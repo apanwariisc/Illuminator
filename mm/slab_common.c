@@ -27,6 +27,7 @@
 
 enum slab_state slab_state;
 LIST_HEAD(slab_caches);
+LIST_HEAD(slab_def_caches);
 DEFINE_MUTEX(slab_mutex);
 struct kmem_cache *kmem_cache;
 
@@ -948,7 +949,7 @@ void __init setup_kmalloc_cache_index_table(void)
 static void __init new_kmalloc_cache(int idx, unsigned long flags)
 {
 	kmalloc_caches[idx] = create_kmalloc_cache(kmalloc_info[idx].name,
-					kmalloc_info[idx].size, flags);
+					kmalloc_info[idx].size, flags | SLAB_DEF_FREE);
 }
 
 /*
