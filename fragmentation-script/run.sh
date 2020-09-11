@@ -11,6 +11,10 @@ do
 done
 
 #---------------------------Step-2-------------------------------
-# Populate page-cache by reading files into memory
+# Populate page-cache by reading files into memory. This is an important step
+# to start process execution in a fragmentated state. There needs to be sufficient
+# file(s) in this directory (or symbolic links to files) so that the entire memory
+# gets populated with OS page cache.
+# Load files mutiple times to warmup the cache.
 ./cache.sh
 ./cache.sh
